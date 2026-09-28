@@ -1,157 +1,150 @@
 ---
 name: portfolio
-description: "Construcción y optimización cuantitativa de portafolios: Markowitz (scipy.optimize + Monte Carlo), Black-Litterman (prior CAPM, views absolutas/relativas, posterior bayesiano), HRP/HERC/NCO (clustering jerárquico, risk parity, NCO con restricciones). Todo flat numpy + scipy, sin Riskfolio-Lib ni PyPortfolioOpt."
+description: "量化投资组合构建与优化框架：马科维茨均值-方差优化（scipy.optimize + 蒙特卡洛模拟）、黑-莱特曼（Black-Litterman）模型（CAPM市场均衡先验、绝对/相对主观观点、贝叶斯后验更新）、HRP/HERC/NCO（层次聚类、风险平价、带约束NCO嵌套聚类优化）。纯NumPy与SciPy平坦化实现，无需Riskfolio-Lib或PyPortfolioOpt依赖。"
 license: MIT
 ---
 
-# Portfolio — Optimización Cuantitativa de Portafolios
+# Portfolio — 投资组合量化构建与优化技能
 
-Este skill implementa **3 enfoques de optimización de portafolios** desde el material del curso
-(notebook `Clase_08_teoria_2025_portafolio.ipynb` y PDF `Portafolios 2025 Ucema.pdf`):
+本技能基于课程理论体系（教学笔记本 `Clase_08_teoria_2025_portafolio.ipynb` 与课件讲义 `Portafolios 2025 Ucema.pdf`），完整实现了 **3 种主流投资组合优化范式**：
 
-1. **Markowitz / Media-Varianza** — Optimización convexa vía `scipy.optimize`
-   + simulación Monte Carlo + frontera eficiente + CML.
-2. **Black-Litterman** — Combinación bayesiana de retornos de equilibrio de mercado
-   (CAPM inverso) con views del inversor, incluyendo matriz de incertidumbre Ω
-   (método Idzorek).
-3. **HRP / HERC / NCO** — Construcción jerárquica de portafolios mediante clustering
-   (single/complete/average/ward), risk parity y NCO con restricciones.
+1. **马科维茨现代投资组合理论（MPT / 均值-方差优化）** — 基于 `scipy.optimize` 的凸优化求解器 + 蒙特卡洛海量随机权重模拟 + 有效前沿（Efficient Frontier）绘制 + 资本市场线（CML）杠杆/去杠杆配置。
+2. **黑-莱特曼（Black-Litterman）模型** — 贝叶斯统计推断框架，将反向 CAPM 计算的市场均衡先验收益率与投资者的绝对/相对主观观点相融合，集成基于 Idzorek 方法的主观观点不确定性协方差矩阵 $\Omega$ 标定。
+3. **层次化投资组合构建（HRP / HERC / NCO）** — 基于图论与机器学习层次聚类（单联动/全联动/平均/Ward 方法）、分层风险平价（Risk Parity）以及带约束条件的嵌套聚类优化（Nested Clustered Optimization, NCO）。
 
-Todos los scripts usan solo `numpy`, `pandas` y `scipy`. Sin dependencias pesadas.
-Este skill es **autónomo**: funciona sin `skills/backtesting`.
+所有脚本仅依赖 `numpy`、`pandas` 和 `scipy`，无任何庞大第三方黑盒库。
+本技能具备**高度自治性**：无需依赖 `skills/backtesting` 即可独立运行。
 
-Para ratios de performance post-optimización (Sharpe, Sortino, VaR, drawdowns, etc.)
-consultar el skill hermana:
-[`skills/backtesting`](https://github.com/gauss314/skills/tree/main/skills/backtesting).
+组合优化求解完成后的多维绩效比率评估（夏普、索提诺、VaR、回撤分析等），可无缝衔接姊妹技能：
+[`skills/backtesting`](https://github.com/gauss314/skills/tree/main/skills/backtesting)。
 
-Part of the [Gauss314 Skills Repository](https://github.com/gauss314/skills).
+项目属于 [Gauss314 Skills 技能代码库](https://github.com/gauss314/skills)。
 
 ---
 
-## File Map
+## 目录结构映射
 
 ```
 skills/portfolio/
-├── SKILL.md                           ← Este archivo
+├── SKILL.md                           ← 本说明文档
 ├── references/
-│   ├── PORTFOLIO_THEORY.md            ← MPT, Markowitz, frontera eficiente (ES)
-│   ├── BLACK_LITTERMAN.md             ← BL: prior, views, posterior, omega (ES)
-│   ├── HIERARCHICAL.md                ← HRP, HERC, NCO, clustering (ES)
-│   └── RISK_MEASURES.md               ← VaR, CVaR, MAD, MSV, DR, MDD (ES)
+│   ├── PORTFOLIO_THEORY.md            ← 现代投资组合理论（MPT）、马科维茨模型、有效前沿推导
+│   ├── BLACK_LITTERMAN.md             ← 黑-莱特曼模型：先验推导、主观观点、贝叶斯后验与 Omega 矩阵
+│   ├── HIERARCHICAL.md                ← 层次化机器学习方法：HRP、HERC、NCO 与层次聚类
+│   └── RISK_MEASURES.md               ← 组合风险度量：VaR、CVaR、MAD、MSV、分散化比率、最大回撤
 ├── assets/
-│   ├── sample_prices.csv              ← Precios multi-activo para ejemplos
-│   ├── sample_returns.csv             ← Retornos multi-activo
-│   ├── sample_mcaps.json              ← Market caps para Black-Litterman
-│   └── defaults.json                  ← Parámetros default
+│   ├── sample_prices.csv              ← 示例用多资产历史价格数据
+│   ├── sample_returns.csv             ← 示例用多资产收益率数据
+│   ├── sample_mcaps.json              ← 用于黑-莱特曼反向推导的市场基准流通市值
+│   └── defaults.json                  ← 默认超参数配置
 ├── scripts/
 │   ├── __init__.py
-│   ├── portfolio.py                   ← Core: Markowitz, Sharpe, Monte Carlo, frontera
-│   ├── black_litterman.py             ← BL: prior, posterior, omega, views
-│   ├── hierarchical.py                ← HRP/HERC/NCO: clustering, risk parity, constraints
-│   ├── risk_measures.py               ← VaR, CVaR, MAD, MSV, MDD, DR
-│   ├── covariance.py                  ← Covarianza: hist, ledoit-wolf, oas, ewma
-│   └── cli.py                         ← CLI unificada (12 modos)
+│   ├── portfolio.py                   ← 核心算法：马科维茨优化、最大夏普、蒙特卡洛模拟、有效前沿
+│   ├── black_litterman.py             ← 黑-莱特曼完整算法：先验均衡、观点矩阵、后验收益、Idzorek Omega
+│   ├── hierarchical.py                ← 层次化组合算法：HRP、HERC、NCO、分层风险平价、约束优化
+│   ├── risk_measures.py               ← 风险度量库：VaR、CVaR、MAD、MSV、MDD、分散化比率
+│   ├── covariance.py                  ← 协方差估计：样本协方差、Ledoit-Wolf 收缩、OAS 收缩、EWMA
+│   └── cli.py                         ← 统一命令行 CLI（提供 12 种运行模式）
 └── tests/
     ├── __init__.py
-    └── test_portfolio.py              ← Tests + validación contra notebook
+    └── test_portfolio.py              ← 自动化单元测试与对照验证
 ```
 
-### Qué hace cada script
+### 各脚本职责分工
 
-| Script | Rol | Funciones clave |
+| 脚本文件 | 角色说明 | 核心函数 |
 |--------|-----|----------------|
-| `portfolio.py` | Core de optimización Markowitz | `max_sharpe_optim`, `min_variance_optim`, `random_portfolios`, `efficient_frontier`, `cml_portfolio`, `asset_stats` |
-| `black_litterman.py` | Black-Litterman completo | `market_implied_risk_aversion`, `market_implied_prior_returns`, `bl_posterior_returns`, `omega_idzorek` |
-| `hierarchical.py` | HRP / HERC / NCO | `hrp_portfolio`, `herc_portfolio`, `nco_portfolio`, `nco_with_constraints`, `hrp_constraints` |
-| `risk_measures.py` | Medidas de riesgo | `var_historic`, `cvar`, `max_drawdown`, `cdar`, `diversification_ratio`, `risk_contribution` |
-| `covariance.py` | Estimación de covarianza | `cov_hist`, `cov_ledoit_wolf`, `cov_oas`, `cov_ewma` |
+| `portfolio.py` | 马科维茨均值-方差优化核心 | `max_sharpe_optim`, `min_variance_optim`, `random_portfolios`, `efficient_frontier`, `cml_portfolio`, `asset_stats` |
+| `black_litterman.py` | 黑-莱特曼（Black-Litterman）全流程 | `market_implied_risk_aversion`, `market_implied_prior_returns`, `bl_posterior_returns`, `omega_idzorek` |
+| `hierarchical.py` | 机器学习层次化组合（HRP / HERC / NCO） | `hrp_portfolio`, `herc_portfolio`, `nco_portfolio`, `nco_with_constraints`, `hrp_constraints` |
+| `risk_measures.py` | 投资组合风险度量指标计算 | `var_historic`, `cvar`, `max_drawdown`, `cdar`, `diversification_ratio`, `risk_contribution` |
+| `covariance.py` | 稳健协方差矩阵估计与收缩技术 | `cov_hist`, `cov_ledoit_wolf`, `cov_oas`, `cov_ewma` |
 
 ---
 
-## Quick Start
+## 快速上手
 
-### Markowitz (scipy.optimize)
+### 马科维茨均值-方差优化（基于 scipy.optimize）
 
 ```bash
-# Max Sharpe con 3 activos
+# 求解多资产的最大夏普比率（Max Sharpe）最优投资组合
 py scripts/cli.py markowitz --assets assets/sample_returns.csv
 
-# Con tasa libre de riesgo personalizada
+# 指定自定义无风险利率 rf
 py scripts/cli.py markowitz --assets assets/sample_returns.csv --rf 0.05
 
-# Estadísticas individuales
+# 输出各单资产的基础统计量（年化收益率、年化波动率、个别夏普）
 py scripts/cli.py stats --assets assets/sample_returns.csv
 ```
 
-### Monte Carlo
+### 蒙特卡洛随机模拟（Monte Carlo）
 
 ```bash
-# Simular 10.000 carteras aleatorias
+# 随机模拟生成 10,000 个随机权重组合
 py scripts/cli.py montecarlo --assets assets/sample_returns.csv
 
-# Guardar frontera a CSV
+# 将模拟计算生成的有效前沿散点导出为 CSV 文件
 py scripts/cli.py montecarlo --assets assets/sample_returns.csv --save frontier.csv
 ```
 
-### Frontera Eficiente
+### 有效前沿精确计算（Efficient Frontier）
 
 ```bash
+# 沿着目标收益率区间精确数值求解 50 个有效前沿边界点
 py scripts/cli.py frontier --assets assets/sample_returns.csv --n 50
 ```
 
-### CML — Leverage y Deleverage
+### 资本市场线（CML）— 杠杆借贷与去杠杆
 
-El portafolio tangente (máximo Sharpe) se combina con el activo libre de riesgo
-para obtener cualquier punto sobre la Capital Market Line (CML), manteniendo
-el mismo Sharpe ratio.
+切点投资组合（即最大夏普组合）与无风险资产进行线性组合，即可在保持夏普比率完全不变的前提下，在资本市场线（CML）上任意滑动定制预期风险收益：
 
 ```bash
-# Portafolio tangente puro (w=1)
+# 纯切点组合（风险资产权重 w = 1.0）
 py scripts/cli.py cml --assets assets/sample_returns.csv --weight 1.0
 
-# Deleverage: 60% en tangencia, 40% en Rf (menos riesgo, mismo Sharpe)
+# 去杠杆（Deleverage）：60% 配置于切点组合，40% 配置于无风险资产（更低波动，夏普不变）
 py scripts/cli.py cml --assets assets/sample_returns.csv --weight 0.6
 
-# Leverage: pide prestado 50% a Rf, invierte 150% en tangencia (más riesgo, mismo Sharpe)
+# 杠杆借贷（Leverage）：以无风险利率借入 50% 本金，总计 150% 资金投资于切点组合（承担更高波动博取超额回报，夏普不变）
 py scripts/cli.py cml --assets assets/sample_returns.csv --weight 1.5
 ```
 
-### Black-Litterman
+### 黑-莱特曼（Black-Litterman）模型
 
 ```bash
-# Prior: retornos implícitos de mercado (CAPM inverso)
+# 仅计算先验：基于 CAPM 反向求解全市场均衡隐含预期收益率
 py scripts/cli.py bl-prior --assets assets/sample_returns.csv --market-prices assets/sample_prices.csv --mcaps assets/sample_mcaps.json
 
-# BL completo con views + optimización
+# 完整黑-莱特曼贝叶斯更新：融入绝对/相对主观观点与置信度，并执行最优资产配置
 py scripts/cli.py bl --assets assets/sample_returns.csv --market-prices assets/sample_prices.csv --mcaps assets/sample_mcaps.json --views '{"BMA": 0.25, "LOMA": 0.4, "MELI": -0.1}' --confidences "0.3,0.5,0.8" --optimize
 ```
 
-### HRP / HERC / NCO
+### 层次化投资组合优化（HRP / HERC / NCO）
 
 ```bash
-# Hierarchical Risk Parity
+# 层次化风险平价（Hierarchical Risk Parity, HRP）
 py scripts/cli.py hrp --assets assets/sample_returns.csv
 
-# Nested Clustered Optimization
+# 嵌套聚类优化（Nested Clustered Optimization, NCO，指定 3 个主聚类簇）
 py scripts/cli.py nco --assets assets/sample_returns.csv --clusters 3
 
-# NCO con restricciones
+# 融入行业分类与权重上下限约束的 NCO 求解
 py scripts/cli.py nco-con --assets assets/sample_returns.csv --constraints assets/sample_constraints.csv --classes assets/sample_classes.csv
 ```
 
-### Riesgo
+### 投资组合风险度量
 
 ```bash
-# Todas las medidas de riesgo
+# 一键计算全套风险度量指标
 py scripts/cli.py risk --prices assets/sample_prices.csv
 
-# Medida específica
+# 仅计算指定的单项风险指标（如 VaR）
 py scripts/cli.py risk --prices assets/sample_prices.csv --measure var
 ```
 
 ---
 
-## Usar como Librería
+## 作为 Python 代码库调用
 
 ```python
 from scripts.portfolio import *
@@ -159,27 +152,28 @@ from scripts.black_litterman import *
 from scripts.hierarchical import *
 
 import numpy as np
+import pandas as pd
 
-# --- Markowitz ---
+# --- 马科维茨均值-方差优化 ---
 rets = pd.read_csv('assets/sample_returns.csv', index_col=0)
 result = max_sharpe_optim(rets, rf=0.045)
-print(result['weights'], result['sharpe'])  # pesos óptimos, Sharpe
+print(result['weights'], result['sharpe'])  # 最优配置权重、最优夏普比率
 
-# --- CML: leverage/deleverage ---
-# 60% en tangencia, 40% en Rf (deleverage)
+# --- 资本市场线 (CML): 杠杆与去杠杆 ---
+# 60% 权重配置于切点组合，40% 配置于无风险资产 (去杠杆)
 cml = cml_portfolio(rets, rf=0.045, weight_tangency=0.6)
-print(cml['ret'], cml['vol'], cml['sharpe'])  # mismo Sharpe que el tangente
+print(cml['ret'], cml['vol'], cml['sharpe'])  # 夏普比率与切点组合严格保持一致
 
-# Leverage: 150% en tangencia (pide prestado 50% a Rf)
+# 150% 权重配置于切点组合 (以无风险利率借入 50% 资金杠杆)
 cml2 = cml_portfolio(rets, rf=0.045, weight_tangency=1.5)
-print(cml2['ret'], cml2['vol'], cml2['sharpe'])  # mismo Sharpe
+print(cml2['ret'], cml2['vol'], cml2['sharpe'])  # 夏普比率完全一致
 
-# --- Monte Carlo ---
+# --- 蒙特卡洛随机模拟 ---
 port_df = random_portfolios(rets, n_portfolios=10000, rf=0.045)
 best = port_df.loc[port_df['sharpe'].idxmax()]
-print(best['weights'])  # mejor combinación Monte Carlo
+print(best['weights'])  # 蒙特卡洛抽样中的最佳权重组合
 
-# --- Black-Litterman ---
+# --- 黑-莱特曼模型 ---
 import json
 with open('assets/sample_mcaps.json') as f:
     mcaps = json.load(f)
@@ -187,31 +181,30 @@ spy = pd.read_csv('assets/sample_prices.csv')['SPY'].pct_change().dropna()
 bl_result = bl_pipeline(rets, spy.values, mcaps,
                         view_dict={'BMA': 0.25, 'LOMA': 0.4},
                         view_confidences=[0.3, 0.5], rf=0.045)
-print(bl_result['posterior'])  # retornos a posteriori
+print(bl_result['posterior'])  # 输出经贝叶斯更新后的后验期望收益率
 
-# --- HRP ---
+# --- 层次化风险平价 (HRP) ---
 hrp_result = hrp_portfolio(rets, linkage_method='ward')
-print(hrp_result['weights'])  # pesos HRP
+print(hrp_result['weights'])  # 输出 HRP 层次风险平价分配的资产权重
 ```
 
 ---
 
-## Dependencias
+## 环境依赖说明
 
-| Librería | Requerida | Uso |
+| 依赖库 | 是否必需 | 主要用途 |
 |----------|:---------:|-----|
-| `numpy` | ✅ | Cómputo vectorizado, álgebra lineal |
-| `pandas` | ✅ | CSV I/O, DataFrames |
-| `scipy` | ✅ | `optimize` (Markowitz), `cluster.hierarchy` (HRP/NCO), `stats` |
+| `numpy` | ✅ | 纯向量化数值计算、线性代数矩阵运算 |
+| `pandas` | ✅ | 数据读写解析、时间序列对齐、DataFrame 操作 |
+| `scipy` | ✅ | `optimize`（凸优化求解）、`cluster.hierarchy`（HRP/NCO 层次聚类）、`stats` |
 
-**No requiere** Riskfolio-Lib, PyPortfolioOpt, sklearn, cvxpy ni arch.
+**完全无需依赖** Riskfolio-Lib, PyPortfolioOpt, sklearn, cvxpy 或 arch。
 
-Para visualización (dendrogramas, frontera eficiente) se puede usar `matplotlib`
-opcionalmente. Ejemplos de plots están en el notebook de referencia.
+如需绘制可视化图表（聚类树状图、有效前沿曲线），可选用 `matplotlib`。参考 notebook 中提供了丰富的绘图算例。
 
 ---
 
-## Referencias Teóricas
+## 经典学术理论文献
 
 - **Markowitz (1952)**: "Portfolio Selection", *Journal of Finance*.
 - **Black & Litterman (1992)**: "Global Portfolio Optimization", *Financial Analysts Journal*.
@@ -222,19 +215,15 @@ opcionalmente. Ejemplos de plots están en el notebook de referencia.
 - **Meucci (2006)**: "Beyond Black-Litterman: Views on Non-Normal Markets", [SSRN 1213325](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1213325).
 - **Avramov (2004)**: "Bayesian Variable Selection in Portfolio Analysis", [SSRN 3326617](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3326617).
 
-Para profundizar en **ratios de performance** (30+ métricas: Sharpe, Sortino,
-VaR, cVaR, Kelly, Rachev, Profit Factor, etc.) y **backtesting** de estrategias:
-[`skills/backtesting`](https://github.com/gauss314/skills/tree/main/skills/backtesting).
+若需进一步计算**组合绩效比率**（30+ 项指标：夏普、索提诺、VaR、cVaR、凯利公式、拉切夫比率、利润因子等）以及执行完整的**策略回测**：
+请参阅姊妹技能 [`skills/backtesting`](https://github.com/gauss314/skills/tree/main/skills/backtesting)。
 
 ---
 
-## Notebook de referencia
+## 参考教学 Notebook
 
-El contenido teórico y ejemplos numéricos de este skill están basados en:
-- `temp/Clase_08_teoria_2025_portafolio.ipynb` — Implementaciones en Python de
-  Markowitz, Monte Carlo, NCO (Riskfolio-Lib), Black-Litterman (PyPortfolioOpt).
-- `temp/Portafolios 2025 Ucema.pdf` — Marco teórico: MPT, CAPM, Fama-French,
-  clustering, NCO, Black-Litterman.
+本技能的理论推导与数值基准算例取材自：
+- `temp/Clase_08_teoria_2025_portafolio.ipynb` — Markowitz、Monte Carlo、NCO（Riskfolio-Lib）、Black-Litterman（PyPortfolioOpt）的教学实现。
+- `temp/Portafolios 2025 Ucema.pdf` — 完整理论概念框架：现代资产组合理论（MPT）、CAPM 资本资产定价模型、Fama-French 多因子、层次聚类算法、NCO、黑-莱特曼模型。
 
-Las implementaciones **flat numpy** en `scripts/` replican los resultados de esos
-notebooks sin depender de las librerías mencionadas.
+位于 `scripts/` 下的**纯 NumPy 平坦化实现**在完全剥离复杂外部黑盒依赖的同时，完美复现了前述教学资料的所有量化计算结果。

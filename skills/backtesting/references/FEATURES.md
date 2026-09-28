@@ -1,45 +1,34 @@
-# Indicadores y Features — Taxonomía de 10 Clases
+# 特征与量化指标 — 10类体系分类指南
 
-Implementados en `scripts/indicators.py`. Cada clase cubre una dimensión
-distinta de la información de mercado, con propiedades matemáticas,
-parámetros y casos de uso específicos.
+在 `scripts/indicators.py` 中完整实现。每一类别均覆盖了市场行情信息的不同维度，具备特定的数学性质、参数设定和量化应用场景。
 
 ---
 
-## Clase 1a: Trend-Following (precio)
+## 第 1a 类：趋势跟踪类（Trend-Following，价格维度）
 
-**Qué son:** Filtros paso-bajo sobre la serie de precios. Suprimen el ruido
-de alta frecuencia para revelar la dirección subyacente. Operan con rezago
-(phase lag) intrínseco: a mayor suavizado, mayor rezago.
+**概念定义：** 作用于价格序列上的低通滤波器（Low-pass filters）。通过滤除高频噪声以呈现底层的趋势方向。所有趋势指标都存在固有的相位滞后（Phase lag）：平滑程度越高，滞后越显著。
 
-### Matemática
+### 数学公式
 
-| Indicador | Fórmula | Parámetros |
+| 指标 | 公式 | 参数说明 |
 |-----------|---------|------------|
-| SMA | (1/n) Σᵢ₌₀ⁿ⁻¹ Pₜ₋ᵢ | n = ventana |
-| EMA | α·Pₜ + (1-α)·EMAₜ₋₁, α = 2/(n+1) | n = período de decaimiento |
-| WMA | Σᵢ₌₁ⁿ wᵢ·Pₜ₋ᵢ₊₁, wᵢ = 2i/(n(n+1)) | n = ventana, pesos lineales |
-| DEMA | 2·EMAₙ(P) − EMAₙ(EMAₙ(P)) | n, elimina ~50% del lag |
-| TEMA | 3·EMA₁ − 3·EMA₂ + EMA₃ (notación: EMAₖ = EMAⁿ aplicada k veces) | n, elimina ~67% del lag |
-| TRIMA | SMA(SMA(P, n), n) centrada | n, suavizado doble |
+| SMA | $(1/n) \sum_{i=0}^{n-1} P_{t-i}$ | $n$ = 滚动窗口大小 |
+| EMA | $\alpha \cdot P_t + (1-\alpha) \cdot \text{EMA}_{t-1}, \quad \alpha = 2/(n+1)$ | $n$ = 半衰衰减周期 |
+| WMA | $\sum_{i=1}^n w_i \cdot P_{t-i+1}, \quad w_i = 2i/(n(n+1))$ | $n$ = 窗口大小，线性递增权重 |
+| DEMA | $2 \cdot \text{EMA}_n(P) - \text{EMA}_n(\text{EMA}_n(P))$ | $n$，可消除约 50% 的滞后 |
+| TEMA | $3 \cdot \text{EMA}_1 - 3 \cdot \text{EMA}_2 + \text{EMA}_3$ （注：$\text{EMA}_k$ 表示对原序列连续做 $k$ 次 EMA） | $n$，可消除约 67% 的滞后 |
+| TRIMA | 中心化 $\text{SMA}(\text{SMA}(P, n), n)$ | $n$，双重三角平滑 |
 
-**Lag teórico:** SMA(n) tiene lag = (n-1)/2. EMA(n) tiene lag ≈ (n-1)/2
-también en estado estacionario, pero responde más rápido a cambios recientes.
-DEMA reduce el lag ~50%, TEMA ~67%, pero amplifican ruido.
+**理论滞后比较：** $\text{SMA}(n)$ 的理论相位滞后为 $(n-1)/2$。稳态下 $\text{EMA}(n)$ 的滞后亦约为 $(n-1)/2$，但 EMA 对近期价格变化的响应速度更快。DEMA 将滞后缩减约 50%，TEMA 将滞后缩减约 67%，但代价是会放大短期噪声。
 
-### Edge entre variantes
+### 各变体之间的 Alpha 优势（Edge）
 
-- **SMA**: usada para señales discretas (cruces) porque sus discontinuidades
-  son más limpias. Ej: SMA 50/200 crossover.
-- **EMA**: mejor para sistemas continuos (weight, z-score) porque da más peso
-  a datos recientes. Más sensible a cambios de régimen.
-- **DEMA/TEMA**: útiles cuando se necesita respuesta rápida pero no se quiere
-  usar ventanas cortas (que amplifican ruido). Compromiso: menos lag pero más
-  sensibilidad a outliers.
-- **TRIMA**: suavizado extremo, elimina casi todo el ruido pero con mucho lag.
-  Útil para filtros de muy largo plazo (> 1 año).
+- **SMA（简单移动均线）**：最适用于生成离散离散交易信号（如均线交叉），因为其阶跃跳变特性更加清晰明确。例如经典的 50/200 日均线金叉死叉系统。
+- **EMA（指数移动均线）**：更适用于连续权重分配系统（如动态仓位权重、Z-Score 标准化），其赋予最新数据更高的权重，对市场体制（Regime）的转变反应更灵敏。
+- **DEMA / TEMA（双重/三重指数移动均线）**：适用于既需要快速响应信号、又不想缩短计算窗口（过短窗口会大幅放大随机噪声）的场景。核心权衡点在于：滞后更短，但对单点异常值（Outliers）更为敏感。
+- **TRIMA（三角移动均线）**：极致的二次平滑，可消除几乎所有高频噪声，但伴随着极大的相位滞后。通常作为超长周期（> 1 年）的宏观大趋势状态过滤器。
 
-### MACD
+### MACD（平滑异同移动平均线）
 
 ```
 MACD = EMA₁₂(P) − EMA₂₆(P)
@@ -47,17 +36,13 @@ Signal = EMA₉(MACD)
 Histogram = MACD − Signal
 ```
 
-Construcción: diferencia de dos EMAs (rápida − lenta) crea un oscilador que
-elimina la tendencia de largo plazo. La Signal es un filtro adicional. El
-cruce de MACD y Signal da señales de momentum. La divergencia entre MACD y
-precio es una de las señales más estudiadas (aunque con baja relación
-señal/ruido en términos prácticos).
+数学构造：两条指数移动均线（快线 − 慢线）的差值构建出一个去除了长期趋势漂移的振荡序列。信号线（Signal）作为二次低通滤波。MACD 与 Signal 的交叉产生动量交易信号。MACD 与价格走势的背离（Divergence）是量化中被广泛研究的信号（但在实盘中独立使用时信噪比较低）。
 
-### ADX
+### ADX（平均趋向指数）
 
 ```
-+DM = Hₜ − Hₜ₋₁ (si > Lₜ₋₁ − Lₜ y > 0, sino 0)
-−DM = Lₜ₋₁ − Lₜ (si > Hₜ − Hₜ₋₁ y > 0, sino 0)
++DM = Hₜ − Hₜ₋₁ (若 > Lₜ₋₁ − Lₜ 且 > 0，否则为 0)
+−DM = Lₜ₋₁ − Lₜ (若 > Hₜ − Hₜ₋₁ 且 > 0，否则为 0)
 TR = max(Hₜ−Lₜ, |Hₜ−Cₜ₋₁|, |Lₜ−Cₜ₋₁|)
 +DI = EMAₙ(+DM) / EMAₙ(TR)
 −DI = EMAₙ(−DM) / EMAₙ(TR)
@@ -65,81 +50,63 @@ DX = |+DI − −DI| / (+DI + −DI)
 ADX = EMAₙ(DX)
 ```
 
-ADX mide la fuerza de la tendencia (no la dirección). Valores > 25 indican
-tendencia. +DI/−DI dan la dirección. La combinación ADX > 25 Y +DI > −DI
-es una de las configuraciones más robustas para trend-following.
+ADX 衡量的是趋势的强弱程度（非趋势方向）。数值 > 25 表示当前处于明确趋势中。+DI 与 −DI 指示方向。经典的量化过滤组合为：`ADX > 25 且 +DI > −DI`，这是趋势跟踪策略中最稳健的入场过滤条件之一。
 
-### Indicadores incluidos
+### 包含的指标
 
-SMA, EMA, WMA, DEMA, TRIMA, TEMA, MACD, ADX, DX, ADXR, +DI/-DI, +DM/-DM,
-SAR, MOM, MIDPOINT, MIDPRICE.
+SMA, EMA, WMA, DEMA, TRIMA, TEMA, MACD, ADX, DX, ADXR, +DI/-DI, +DM/-DM, SAR, MOM, MIDPOINT, MIDPRICE。
 
 ---
 
-## Clase 1b: Osciladores (precio)
+## 第 1b 类：振荡器类（Oscillators，价格动量）
 
-**Qué son:** Transformaciones de precio acotadas a un rango fijo (típicamente
-0-100 o -1 a 1). Miden la velocidad del cambio de precio (momentum) o la
-posición relativa dentro de un rango histórico.
+**概念定义：** 将价格序列变换映射至一个有界区间内（通常为 0~100 或 -1~1）。用于衡量价格变动的加速度/速率（动量 Momentum），或评估当前价格在历史波动区间中的相对百分位。
 
-### RSI (Relative Strength Index)
+### RSI（相对强弱指标）
 
 ```
 RSI = 100 − 100 / (1 + RS)
 RS = EMAₙ(ΔP⁺) / EMAₙ(|ΔP⁻|)
 ```
 
-Donde ΔP⁺ = max(Pₜ−Pₜ₋₁, 0), ΔP⁻ = min(Pₜ−Pₜ₋₁, 0). Wilder original usa
-SMA en vez de EMA. Fórmula con EMA converge más rápido a valores estables.
+其中 $\Delta P^+ = \max(P_t - P_{t-1}, 0)$，$\Delta P^- = \min(P_t - P_{t-1}, 0)$。Wilder 经典原版使用 SMA 进行平滑，采用 EMA 公式则能够使指标更快地收敛到平稳数值。
 
-RSI mide la magnitud de las ganancias recientes vs las pérdidas recientes,
-normalizado a [0, 100]. Niveles clásicos: 30/70 (sobreventa/sobrecompra).
+RSI 衡量近期上涨幅度与下跌幅度的相对强弱比，归一化在 [0, 100] 区间。经典阈值划分：超卖（< 30）与超买（> 70）。
 
-**Edge vs precio puro:** RSI puede mostrar **divergencia** — el precio hace
-un nuevo máximo pero RSI no (divergencia bajista). Esto es señal de
-debilidad subyacente que el precio no muestra. Sin embargo, la divergencia
-tiene baja tasa de acierto como señal independiente; funciona mejor como
-filtro (no tomar señales trend-following si hay divergencia).
+**相比纯价格的优势：** RSI 能够呈现**顶底背离**现象——例如价格创出新高但 RSI 未能同步创出新高（顶背离）。这往往揭示了价格表象下蕴含的动量衰竭。然而，背离作为单因子买卖信号的胜率偏低；它更适宜作为风险过滤器（当存在明显顶背离时禁止顺势做多）。
 
-### Stochastics (%K, %D)
+### 随机振荡指标（Stochastics %K, %D）
 
 ```
 %K = 100 × (Cₜ − Lₙ) / (Hₙ − Lₙ)
 %D = SMA₃(%K)
 ```
 
-Donde Lₙ, Hₙ son mínimos/máximos de n períodos. %K mide dónde cerró el precio
-dentro del rango reciente. %D es una media suavizada.
+其中 $L_n$ 与 $H_n$ 分别为过去 $n$ 个周期的最低价与最高价。%K 衡量收盘价落在近期价格波动区间中的相对位置。%D 为其平滑均线。
 
-**Diferencia con RSI:** Stochastics usa el rango de precio (high-low), no el
-cambio día a día. Es más volátil que RSI y da más señales. Slow stochastics
-(%D) es la versión más usada.
+**与 RSI 的核心区别：** 随机振荡指标直接利用真实极值价格区间（High-Low），而非仅仅关注逐日收盘变动。相比 RSI 其波动性更大，信号触发频次更高。慢速随机指标（Slow Stochastics, 即平滑后的 %D）是实盘中最常用的版本。
 
-### MFI (Money Flow Index)
+### MFI（资金流量指标）
 
 ```
 MFI = 100 − 100 / (1 + MFR)
 MFR = Σ MF⁺ / Σ MF⁻
-MF = Typical Price × Volume
+MF = 典型价格 (Typical Price) × 成交量 (Volume)
 ```
 
-Como RSI pero ponderado por volumen. Añade la dimensión de flujo. MFI > 80
-con precio subiendo pero MFI bajando = distribución (divergencia más confiable
-que RSI porque incorpora volumen).
+本质上是将成交量加权引入 RSI 算法中，融入了资金流动维度的考量。当出现价格继续冲高而 MFI 指标转头向下且 > 80 时，通常表明主力资金正在拉高出货（派发阶段）。由于融入了成交量信息，MFI 的背离信号比纯价格 RSI 更加可靠。
 
-### Indicadores incluidos
+### 包含的指标
 
-WILLR, APO, PPO, STOCH, STOCHF, RSI, BOP, CMO, ROC, MFI, TRIX, ULTOSC.
+WILLR, APO, PPO, STOCH, STOCHF, RSI, BOP, CMO, ROC, MFI, TRIX, ULTOSC。
 
 ---
 
-## Clase 1c: Contrarios (saturación)
+## 第 1c 类：反转与均值回归类（Contrarians，价格极值与饱和度）
 
-**Qué son:** Detectan cuándo el precio está en un extremo estadístico de su
-distribución reciente, sugiriendo agotamiento de la tendencia o reversión
-inminente. Operan más rápido que trend-following en puntos de inflexión.
+**概念定义：** 监测价格何时偏离至其近期经验分布的统计极端位置，提示当前趋势可能出现动能耗尽或即将发生均值回归反转。在拐点探测上其响应速度通常快于滞后的趋势跟踪系统。
 
-### Bollinger Bands
+### 布林线（Bollinger Bands）
 
 ```
 Middle = SMAₙ(P)
@@ -147,115 +114,93 @@ Upper = SMAₙ(P) + k · σₙ(P)
 Lower = SMAₙ(P) − k · σₙ(P)
 ```
 
-Bandas de volatilidad: cuando el precio toca la banda superior, está a k
-desviaciones estándar de la media de n días. n=20, k=2 es el default de
-Bollinger original.
+动态波动率通道：当价格触及上轨时，表明价格偏离 $n$ 日均线达到了 $k$ 倍标准差的统计高位。经典默认参数为 $n=20, k=2$。
 
-**Edge cuantitativo:** Las bandas son dinámicas — se ensanchan en alta
-volatilidad y se contraen en baja vol. Un contracción extrema (squeeze)
-suele preceder a movimientos grandes. El ancho de banda normalizado
-(Width = (Upper−Lower)/Middle) es un predictor de vol futura.
+**量化优势：** 通道具有自适应动态性——在高波动时期通道自发扩张，在低波动时期自发收缩。极致的收窄压缩（Squeeze）往往预示着即将出现大幅度的单边突破行情。归一化带宽（Bandwidth = (Upper − Lower) / Middle）是未来实际波动率变动的优秀预测因子。
 
-**Contrarian:** Comprar en banda inferior y vender en banda superior funciona
-en rangos laterales. En tendencias fuertes, el precio puede "caminar" la
-banda — en ese caso el indicador deja de ser contrario y el trend-following
-(Clase 1a) es más apropiado.
+**反转交易逻辑：** 在震荡无趋势行情中，触及下轨买入、触及上轨卖出的均值回归策略胜率极高。但在强烈的单边大趋势行情中，价格往往会长期沿着轨道“贴轨单边运行（Walking the Bands）”——此时反转逻辑将失效甚至产生巨大回撤，应切换为 1a 类趋势跟踪系统。
 
-### CCI (Commodity Channel Index)
+### CCI（顺势指标）
 
 ```
 CCI = (TPₜ − SMAₙ(TP)) / (0.015 · MDₙ)
 TP = (H + L + C) / 3
-MDₙ = desviación media absoluta de TP en n períodos
+MDₙ = 过去 n 个周期 TP 的平均绝对偏差 (Mean Absolute Deviation)
 ```
 
-Similar a Bollinger pero usa Typical Price en vez de close y desviación media
-absoluta en vez de std. Más sensible a outliers.
+原理与布林带类似，但改用典型价格（TP）替代收盘价，并以平均绝对偏差（MD）替代样本标准差，因此对异常值冲击的敏感度有所不同。
 
-### ATR (Average True Range)
+### ATR（真实波动幅度均值）
 
 ```
 TR = max(Hₜ−Lₜ, |Hₜ−Cₜ₋₁|, |Lₜ−Cₜ₋₁|)
 ATR = EMAₙ(TR)
 ```
 
-No es un oscilador ni da dirección — es un **estimador de volatilidad**.
-Se usa para:
-- Tamaño de posición (invertir menos cuando ATR es alto)
-- Stop loss dinámico (stops a múltiplo de ATR)
-- Normalizar indicadores entre activos de distinta volatilidad
+ATR 并非方向性指标，而是一个纯粹的**波动率估计量**。在量化系统中主要用于：
+- 动态头寸缩放（波动率反比资金分配，ATR 越高则分配的仓位越轻）
+- 动态自适应止损（例如按 $2 \times \text{ATR}$ 设定跟踪止损线）
+- 跨不同波动率特性的资产间进行指标标准化与波动率对齐
 
-### Indicadores incluidos
+### 包含的指标
 
-CCI, AROON, AROONOSC, BBANDS, TRANGE, ATR.
+CCI, AROON, AROONOSC, BBANDS, TRANGE, ATR。
 
 ---
 
-## Clase 2: Flujo (volumen, derivados)
+## 第 2 类：资金流与成交量（Flow，量价与衍生品）
 
-**Qué son:** Incorporan información de volumen, open interest y flujo de
-órdenes. Operan en una dimensión ortogonal al precio — precio y volumen son
-semindependientes.
+**概念定义：** 融合成交量、持仓量（Open Interest）以及订单流微观结构信息。从与价格正交的维度刻画市场状态——价格与成交量在信息论意义上属于半独立变量。
 
-### OBV (On-Balance Volume)
+### OBV（能量潮 / 累积成交量）
 
 ```
-OBVₜ = OBVₜ₋₁ + Volₜ si Cₜ > Cₜ₋₁
-OBVₜ = OBVₜ₋₁ − Volₜ si Cₜ < Cₜ₋₁
-OBVₜ = OBVₜ₋₁ si Cₜ = Cₜ₋₁
+OBVₜ = OBVₜ₋₁ + Volₜ  (若 Cₜ > Cₜ₋₁)
+OBVₜ = OBVₜ₋₁ − Volₜ  (若 Cₜ < Cₜ₋₁)
+OBVₜ = OBVₜ₋₁          (若 Cₜ = Cₜ₋₁)
 ```
 
-Acumula volumen en dirección del cambio de precio. Es un indicador de flujo
-neto. La divergencia OBV-precio es una de las señales más antiguas y
-respetadas: el precio sube pero OBV baja = distribución (smart money vendiendo).
+按每日价格涨跌符号将成交量进行定向累加，用于度量净资金流向。OBV 与价格的量价背离是技术分析领域最为经典有效的信号之一：价格持续走高但 OBV 反向下滑，意味着市场正在进入主力出货派发阶段。
 
-**Limitación:** OBV ignora la magnitud del cambio de precio — todo movimiento
-alcista pesa igual, sea +0.01% o +5%. AD (Acumulación/Distribuición) corrige
-esto ponderando por dónde cerró el precio dentro del rango del día.
+**缺陷局限：** OBV 完全忽略了价格变动幅度的大小——上涨 0.01% 与上涨 5% 计入的成交量权重毫无二致。累积/派发线（AD）通过考虑收盘价在日内高低区间中的相对位置对这一缺陷进行了修正。
 
-### AD (Acumulación/Distribución)
+### AD（累积/派发指标，Accumulation/Distribution）
 
 ```
-MFM = ((Cₜ − Lₜ) − (Hₜ − Cₜ)) / (Hₜ − Lₜ)  (Money Flow Multiplier)
+MFM = ((Cₜ − Lₜ) − (Hₜ − Cₜ)) / (Hₜ − Lₜ)   (资金流量乘数)
 ADₜ = ADₜ₋₁ + MFM × Volₜ
 ```
 
-MFM va de -1 a +1 ponderando la posición del cierre en el rango del día.
-AD es más preciso que OBV porque captura la intesidad del movimiento.
+资金流量乘数（MFM）的取值范围在 $[-1, +1]$ 之间，用于度量多空双方在当日交易区间内的相对主导力量。AD 相比 OBV 能够更精细地刻画行情的资金参与强度。
 
-### VWAP
+### VWAP（成交量加权平均价）
 
 ```
-VWAPₜ = Σ(Pᵢ · Volᵢ) / Σ(Volᵢ), i = 1..t dentro del día
+VWAPₜ = Σ(Pᵢ · Volᵢ) / Σ(Volᵢ),  i 为当日开盘至当前时点 t
 ```
 
-Usado por institucionales como benchmark de ejecución. Precio por encima de
-VWAP = sesgo comprador, por debajo = sesgo vendedor.
+被大型机构投资者广泛用作算法交易执行（Execution Benchmark）基准。价格处于 VWAP 之上体现多方买盘强势，处于 VWAP 之下则体现空方卖盘主导。
 
-### Indicadores incluidos
+### 包含的指标
 
-VWAP, OBV, AD, ADOSC. Interfaces para métricas externas (put/call ratio,
-funding rate, open interest change).
+VWAP, OBV, AD, ADOSC。支持扩展接入外部衍生品指标接口（如认沽认购比 Put/Call Ratio、永续合约资金费率 Funding Rate、持仓异动变化等）。
 
 ---
 
-## Clase 3: Combinados y Normalización
+## 第 3 类：组合指标与特征归一化（Combined & Normalization）
 
-**Qué son:** Operadores sobre indicadores — los combinan, normalizan y
-transforman para construir señales multi-dimensionales.
+**概念定义：** 针对基础指标的元算子——将多个指标进行交叉组合、尺度归一化和非线性变换，用以构建多维综合量化信号。
 
 ### cross_indicator(A, B, method='zscore_weight')
 
-Pondera el indicador A por el z-score de B. Matemáticamente:
+利用指标 B 的滚动 Z-Score 动态加权指标 A。数学表达式：
 
 ```
 zB = (Bₜ − rolling_mean(B, n)) / rolling_std(B, n)
 output = A × Φ(zB)
 ```
 
-Donde Φ es la CDF normal (comprime z-scores extremos a [0,1]). Funciona
-como una compuerta: B confirma o refuta la señal de A. Ejemplo: RSI
-confirmado por volumen (OBV z-score alto).
+其中 $\Phi$ 为标准正态分布的累积分布函数（CDF），用于将极端 Z-Score 平滑压缩映射至 $[0, 1]$ 之间。该机制充当了信号“门控器（Gating）”的作用：指标 B 用于确认或否决指标 A 发出的信号。典型应用：RSI 的反转信号必须受到成交量指标（如 OBV 处于高 Z-Score 状态）的确认方能生效。
 
 ### range_bound(series, window)
 
@@ -263,9 +208,7 @@ confirmado por volumen (OBV z-score alto).
 output = (series − rolling_min(series, n)) / (rolling_max(series, n) − rolling_min(series, n))
 ```
 
-Mapea cualquier serie a [0, 1] usando min/max rolling. Útil para normalizar
-indicadores heterogéneos (ej: RSI [0,100] + CCI [-∞,∞] + MFI [0,100]) antes
-de combinarlos. El rolling window evita look-ahead bias.
+基于滚动窗口的局部极值将任意时间序列压缩映射至 $[0, 1]$ 区间。特别适用于在多因子融合前对不同量纲与取值范围的指标进行尺度对齐（例如融合 RSI $[0, 100]$、CCI $[-\infty, +\infty]$ 与 MFI $[0, 100]$）。滚动窗口避免了全样本归一化造成的未来函数泄露。
 
 ### zscore_norm(series, window)
 
@@ -273,302 +216,241 @@ de combinarlos. El rolling window evita look-ahead bias.
 output = (series − rolling_mean(series, n)) / rolling_std(series, n)
 ```
 
-Normalización gaussiana rolling. Output es adimensional — permite sumar
-señales de diferentes indicadores sin que uno domine por escala.
+基于滚动局部窗口的高斯 Z-Score 标准化。输出为无量纲序列——允许多个不同维度的指标直接线性相加，防止量纲过大的因子主导组合得分。
 
-**⚠️ CRÍTICO:** Todas las normalizaciones deben usar ventanas **rolling**.
-Estadísticas globales introducen **look-ahead bias** (data leak).
+**⚠️ 绝对红线准则：** 所有的标准化与归一化计算必须严格基于**纯历史滚动窗口（Rolling Windows）**。严禁使用全样本均值和标准差，否则将引入严重的**未来信息泄露（Look-Ahead Bias / Data Leakage）**。
 
 ---
 
-## Clase 4: Conteos Discretos (Poisson, Binomial)
+## 第 4 类：离散计数模型（Discrete Counts，泊松与二项分布）
 
-**Qué son:** Modelos probabilísticos para eventos discretos — no para series
-temporales continuas. Miden frecuencia de ocurrencia, no magnitud.
+**概念定义：** 针对离散尾部事件（非连续价格时间序列）构建的概率建模工具。关注的是极端事件的发生频率与间隔时间，而非变动幅度。
 
-### Poisson Rate
-
-```
-λ̂ = N_eventos / T_períodos
-P(k eventos en t) = e^{−λt} · (λt)ᵏ / k!
-```
-
-Para eventos raros: flash crashes, defaults, gaps de precio, saltos de
-volatilidad. El λ estimado permite calcular probabilidad de que ocurran 0, 1,
-o N eventos en un período futuro.
-
-**Edge:** Un activo puede tener baja volatilidad (medidas continuas normales)
-pero alta tasa de eventos extremos (Poisson). Esto es invisible para todas
-las clases anteriores.
-
-### Binomial Ratio
+### 泊松发生率（Poisson Rate）
 
 ```
-p̂ = N_éxitos / N_intentos
+λ̂ = N_events / T_periods
+P(t 时间内发生 k 次事件) = e^{−λt} · (λt)ᵏ / k!
 ```
 
-Proporción de días positivos sobre total. Con corrección para muestras
-pequeñas (unbiased_estimator). Útil para medir consistencia de una estrategia
-independientemente de la magnitud de las ganancias.
+专门用于建模金融市场中的罕见极端事件：闪崩（Flash Crashes）、信用违约、价格跳空缺口以及波动率突发剧增。基于估计得到的 $\hat{\lambda}$，可以解析计算未来某一特定时间段内发生 0 次、1 次或多次极端冲击的概率。
 
-### Indicadores incluidos
+**量化优势：** 某些标的在常规状态下表现出很低的连续日波动率（在常规指标下看似极度安全），但其极端尾部事件的泊松发生率却异常高。这种隐蔽的尾部风险对于前面所有的连续型技术指标是完全不可见的。
 
-`poisson_rate(events, period)`, `binomial_ratio(successes, trials)`,
-`unbiased_estimator(p_hat, n)`, `event_probability(rate, threshold)`.
+### 二项成功率（Binomial Ratio）
+
+```
+p̂ = N_successes / N_trials
+```
+
+策略单日盈利交易次数占总交易次数的经验胜率，并引入小样本无偏修正估计器（Unbiased Estimator）。用于在剥离收益幅度影响的前提下，独立评估交易逻辑执行的胜率一致性与稳健性。
+
+### 包含的指标
+
+`poisson_rate(events, period)`, `binomial_ratio(successes, trials)`, `unbiased_estimator(p_hat, n)`, `event_probability(rate, threshold)`。
 
 ---
 
-## Clase 5: Estacionalidad
+## 第 5 类：周期与季节性（Seasonality）
 
-**Qué son:** Patrones periódicos determinísticos — no dependen del precio
-sino del momento temporal (hora, día, mes, ciclo).
+**概念定义：** 确定性或准周期性重复出现的日历时间规律——不依赖于当前价格走势，而是取决于具体的时间节点（交易时段、工作日、月份、结算周期或宏观商业周期）。
 
-### Fourier Terms
-
-```
-ϕⱼ(t) = sin(2πjt / T), cos(2πjt / T), j = 1..n
-```
-
-Genera n pares sin/cos para cualquier período T. Son features ortogonales
-que capturan ciclos de cualquier frecuencia sin ventanas móviles ni rezago.
-Se usan como entrada para modelos ML (regresión lineal, random forest, etc.).
-La ventaja sobre seasonal_profile: no requieren datos históricos del activo
-— son determinísticos.
-
-### STL Decomposition
-
-Descompone la serie en tendencia + estacionalidad + residuo usando
-LOESS (regresión local). Wrapper de `statsmodels.tsa.seasonal.STL`.
-Parámetros: periodo (días), seasonal (longitud del smoother sazonal),
-trend (longitud del smoother de tendencia).
-
-### seasonal_profile
+### 傅里叶基底项（Fourier Terms）
 
 ```
-promedio(serie[índices_del_mismo_período])
+ϕⱼ(t) = sin(2πjt / T), cos(2πjt / T),  j = 1..n
 ```
 
-Agrupa observaciones por período (lunes, martes, ..., hora 1, hora 2, ...)
-y calcula el promedio. Simple y efectivo para detectar patrones de calendario.
+针对任意给定周期 $T$ 构建 $n$ 对正弦/余弦正交特征。这些正交特征能够直接捕捉任意特定频率的周期循环模式，且完全不需要滑动窗口，因而零相位滞后。可直接作为机器学习回归、随机森林或神经网络的显式特征输入。相比经验日历轮廓，其显著优势在于完全具备数学确定性。
 
-### Edge
+### STL 趋势季节性分解（STL Decomposition）
 
-Los trend-following detectan tendencia **después** de que aparece. La
-estacionalidad predice movimientos **antes** de que ocurran, basándose en
-patrones temporales repetitivos. El edge combinado: usar estacionalidad para
-sesgar posición (ej: tender a estar largo en enero por January effect) y
-trend-following para confirmar la entrada.
+基于局部加权回归（LOESS）将复杂时间序列解构为：趋势项（Trend）+ 季节项（Seasonal）+ 残差项（Residue）。封装调用 `statsmodels.tsa.seasonal.STL`。关键参数：季节基准周期 `period`、季节平滑窗口 `seasonal` 与趋势平滑窗口 `trend`。
 
-### Indicadores incluidos
+### 经验季节轮廓（seasonal_profile）
 
-`seasonal_profile(series, period)`, `fourier_terms(T, n_terms)`,
-`stl_decompose(series, period)`.
+```
+mean(series[同一周期索引])
+```
+
+按指定日历周期维度（如周一至周五、全天第 1~4 交易小时等）聚合历史样本并计算均值。结构简单直接，非常有效于挖掘“周内效应（Day-of-the-week effect）”或特定时间段日内效应。
+
+### 策略优势（Edge）
+
+趋势跟踪指标只能在趋势已经形成**之后**被动跟进；而季节性与日历特征则基于高度可重复的历史规律在行情发生**之前**进行先验预判。典型的量化优势结合方式：利用季节性特征设定大方向偏好（例如“一月效应”期间偏多头配置），并借助趋势跟踪与入场指标在微观层面精确确认触发时机。
+
+### 包含的指标
+
+`seasonal_profile(series, period)`, `fourier_terms(T, n_terms)`, `stl_decompose(series, period)`。
 
 ---
 
-## Clase 6: Estadísticos
+## 第 6 类：统计分布特征（Statistical）
 
-**Qué son:** Momentos móviles de la distribución de retornos. Miden forma,
-no dirección.
+**概念定义：** 收益率分布的各阶局部滚动统计矩。关注的是收益分布的形状（Shape）特征，而非单一的涨跌方向。
 
-### Momentos Rolling
+### 滚动统计矩（Rolling Moments）
 
 ```
 μₜ = rolling_mean(r, n)
 σₜ = rolling_std(r, n)
-γₜ = rolling_skew(r, n)    — asimetría: positiva = cola derecha larga
-κₜ = rolling_kurt(r, n)    — curtosis: > 3 = colas más pesadas que normal
+γₜ = rolling_skew(r, n)    — 偏度：正偏代表长右尾（暴利机会），负偏代表肥左尾（崩盘风险）
+κₜ = rolling_kurt(r, n)    — 峰度：> 3 代表厚尾尖峰（极值事件概率显著高于正态假设）
 ```
 
-La ventana n debe ser lo suficientemente grande para estimación estable
-(mínimo 21 días para skew/kurt, 63+ recomendado). Valores individuales son
-ruidosos; analizar la evolución (tendencia de skew/kurt) más que el valor
-absoluto.
+计算偏度与峰度需要足够大的滚动样本窗口以确保估计量的统计收敛与稳健（计算偏度/峰度窗口至少 21 日，建议 63 日以上）。单个时点的绝对估计值往往噪声较大，实盘更侧重于跟踪其动态演变趋势（例如偏度急速由正转负常伴随着崩盘风险积聚）。
 
-### Tails Ratio
+### 尾部比率（Tails Ratio）
 
 ```
-TR(α) = Q(1−α) / Q(α)
+TR(α) = Q(1−α) / |Q(α)|
 ```
 
-Ratio de quantiles superior a inferiores. Mide simetría de colas. TR > 2
-indica asimetría significativa. Complementa a skewness pero es más robusto
-a outliers extremos.
+收益率分布右侧极端分位数与左侧极端分位数的绝对值之比。直接度量尾部损益的非对称性。当 $\text{TR} > 2$ 时，意味着在极端情况下策略获利潜能显著高于其面临的极端下行亏损。尾部比率与偏度互为补充，且对单点离群极值的鲁棒性更强。
 
-### Best Fit Distribution
+### 概率分布拟合优度评选（Best Fit Distribution）
 
-Para 5 distribuciones paramétricas: Normal (2 params), t (3), NCt (4),
-Laplace (2), Johnson SU (4). Johnson SU:
+支持 5 类参数化理论分布的自动化拟合与 KS 检验：正态分布 Normal（2参数）、学生 t 分布 Student-t（3参数）、非中心 t 分布 NCt（4参数）、拉普拉斯分布 Laplace（2参数）以及 Johnson SU 分布（4参数）。其中 Johnson SU 分布的形式如下：
 
 ```
 Z = γ + δ · sinh⁻¹((X − ξ) / λ)
 X = ξ + λ · sinh((Z − γ) / δ)
 ```
 
-Johnson SU captura asimetría y curtosis arbitrarias. Es la única distribución
-con 4 parámetros que puede modelar cualquier combinación de skew/kurt.
-En la práctica, es el mejor fit para retornos de equities (ver VALIDATION.md,
-Level 1 — marginal test: KS ≈ 0.01 vs Normal ≈ 0.07).
+Johnson SU 分布能够自由涵盖任意组合的偏度与峰度形态，是目前理论上唯一仅用 4 个参数即可拟合任意偏斜厚尾经验分布的连续模型。实盘实证表明，它对股票市场真实收益率分布的拟合优度在所有备选分布中稳居第一（详见 VALIDATION.md 第 1 层验证：KS 统计量约为 0.01，远优于高斯正态假设的 0.07）。
 
-### Indicadores incluidos
+### 包含的指标
 
-`rolling_vol(returns, window)`, `rolling_skew(returns, window)`,
-`rolling_kurt(returns, window)`, `tails_ratio(returns, alpha)`,
-`zscore(series, window=None)`, `best_fit_dist(returns)`,
-`fit_distribution(returns, name)`.
+`rolling_vol(returns, window)`, `rolling_skew(returns, window)`, `rolling_kurt(returns, window)`, `tails_ratio(returns, alpha)`, `zscore(series, window=None)`, `best_fit_dist(returns)`, `fit_distribution(returns, name)`。
 
 ---
 
-## Clase 7: Referenciales (benchmark)
+## 第 7 类：基准参照与相对指标（Referential）
 
-**Qué son:** Métricas relativas entre pares de activos. Miden relaciones,
-no valores absolutos.
+**概念定义：** 资产与基准之间或不同资产对之间的相对度量。关注的是资产间的协动交互关系，而非单一资产的绝对表现。
 
-### Beta y Alpha
+### 贝塔（Beta）与詹森阿尔法（Jensen's Alpha）
 
 ```
 β = Cov(r_strat, r_bench) / Var(r_bench)
 α = (r_strat − r_f) − β · (r_bench − r_f)
 ```
 
-Beta mide exposición sistemática al benchmark. Beta = 1: el activo se mueve
-con el mercado. Beta = 0: no hay correlación. Beta < 0: inverso.
+Beta 衡量策略承担的系统性市场风险暴露。$\beta = 1$ 代表策略完全同步跟随市场基准波动；$\beta = 0$ 代表与市场完全正交不相关；$\beta < 0$ 代表与市场呈反向走势。
 
-Alpha de Jensen: retorno ajustado por riesgo de mercado. Es el estándar para
-evaluar si un manager agrega valor vs una estrategia pasiva. α > 0 significa
-que la estrategia superó al benchmark ajustado por riesgo.
+詹森 Alpha 是经市场系统性风险调整后的真实超额收益率。它是评估投资经理或量化策略是否真正创造独立超额价值（而非简单借由高杠杆放大 Beta 敞口）的核心金标准。$\alpha > 0$ 表明策略取得了超越基准风险承担的纯净超额利润。
 
-### Rolling Correlation
+### 滚动相关系数（Rolling Correlation）
 
 ```
 ρₜ(A, B) = rolling_cov(A, B, n) / (rolling_std(A, n) · rolling_std(B, n))
 ```
 
-Soporta Pearson, Kendall y Spearman. Pearson captura correlación lineal;
-Spearman captura cualquier relación monótona (mejor para activos con
-relaciones no lineales). Kendall es más robusto a outliers.
+支持 Pearson（皮尔逊）、Kendall（肯德尔）与 Spearman（斯皮尔曼）相关性算法。Pearson 衡量线性相关性；Spearman 衡量任意单调非线性关系（更适合大宗商品或衍生品等非线性资产）；Kendall 则对极端异常值具备更强的抗噪能力。
 
-### Cross-Asset Matrix
+### 跨资产相关矩阵（Cross-Asset Matrix）
 
-Genera la matriz de correlación completa para N activos. Útil para:
-- Detectar cambios de régimen (todas las correlaciones tienden a 1 en crisis).
-- Identificar activos con baja correlación (candidatos a diversificación).
-- Construir portfolios con correlación objetivo.
+生成 $N$ 个资产间完整的全维度相关性矩阵。量化核心用途：
+- 识别市场危机状态下的体制转换（在市场全面暴跌恐慌期间，几乎所有风险资产的相关系数都会趋向于 1）。
+- 挑选低相关或负相关资产构建分散化的全天候投资组合。
+- 为基于风险平价（Risk Parity）或最小方差模型提供关键输入。
 
-### Cross-Timeframe Correlation
+### 跨周期相关性（Cross-Timeframe Correlation）
 
-Correlación entre la misma serie a diferentes frecuencias (ej: retornos
-diarios vs semanales). Si la correlación intra-timeframe es baja, la señal
-no es consistente en temporalidades — posible overfitting.
+计算同一序列在不同时间频率重采样下的相关一致性（例如日收益率与周收益率趋势）。若跨时间周期的相关度很低，表明该策略信号缺乏频率尺度不变性，存在较高的周期过拟合嫌疑。
 
-### Indicadores incluidos
+### 包含的指标
 
-`alpha(strat, bench, rf)`, `beta(strat, bench)`,
-`rolling_corr(A, B, window, method)`, `cross_asset_matrix(returns_df, method)`,
-`cross_timeframe_corr(A, B, periods)`.
+`alpha(strat, bench, rf)`, `beta(strat, bench)`, `rolling_corr(A, B, window, method)`, `cross_asset_matrix(returns_df, method)`, `cross_timeframe_corr(A, B, periods)`。
 
 ---
 
-## Clase 8: Fundamentales
+## 第 8 类：基本面量化指标（Fundamental）
 
-Implementados en `scripts/fundamental_ratios.py`.
+在 `scripts/fundamental_ratios.py` 中完整实现。
 
-### Altman Z-Score (predicción de quiebra)
+### Altman Z-Score（财务危机与破产预测模型）
 
 ```
 Z = 1.2·A + 1.4·B + 3.3·C + 0.6·D + 1.0·E
 
-A = Working Capital / Total Assets    — liquidez operativa
-B = Retained Earnings / Total Assets   — rentabilidad acumulada
-C = EBIT / Total Assets                — productividad de activos
-D = Market Cap / Total Liabilities     — solvencia de mercado
-E = Sales / Total Assets               — rotación de activos
+A = 营运资金 / 总资产 (Working Capital / Total Assets)      — 短期流动性保障
+B = 留存收益 / 总资产 (Retained Earnings / Total Assets)   — 历史累积盈利能力
+C = 息税前利润 / 总资产 (EBIT / Total Assets)              — 资产端实际经营产出率
+D = 股票总市值 / 总负债 (Market Cap / Total Liabilities)   — 市场认可的偿债安全垫
+E = 营业收入 / 总资产 (Sales / Total Assets)               — 资产综合周转效率
 ```
 
-Z > 2.99: seguro. 1.81 < Z < 2.99: zona gris. Z < 1.81: distress.
+阈值评级：$Z > 2.99$ 为财务安全区；$1.81 < Z < 2.99$ 为灰色观察区；$Z < 1.81$ 为高危财务困境区（破产风险显著增加）。
 
-**No aplicar a bancos o financials:** el working capital negativo es
-estructural en bancos (prestan dinero a largo, toman depósitos a corto).
-El Z-score de un banco sano puede ser < 1.81, dando falsos positivos.
+**⚠️ 严禁适用于银行或金融机构：** 商业银行的核心商业模式是吸收短期存款、发放长期贷款，天生呈现持续的负营运资金状态。即便是一家高度健康的优质银行，其 Z 值也可能常年低于 1.81，从而引发严重的误判。
 
-### Piotroski F-Score (calidad fundamental)
+### Piotroski F-Score（企业财务质量综合评分）
 
-9 criterios binarios (0/1), puntaje 0-9:
+包含 9 项严格的 0/1 二元财务判准，综合得分在 0~9 分之间：
 
-**Rentabilidad (4):** NI > 0, CFO > 0, ROA mejoró, CFO > NI.
-**Leverage/Liquidez (3):** deuda/activos bajó, current ratio mejoró,
-  acciones no diluidas.
-**Eficiencia operativa (2):** margen bruto mejoró, rotación de activos mejoró.
+- **盈利能力维度（4 分）：** 净利润（NI）> 0、经营现金流（CFO）> 0、总资产收益率（ROA）同比提升、经营现金流大于净利润（CFO > NI，确认盈利含金量）。
+- **杠杆与流动性维度（3 分）：** 资产负债率同比下降、流动比率同比提升、未发生增发配股稀释股权。
+- **营运效率维度（2 分）：** 销售毛利率同比提升、资产周转率同比改善。
 
-F-Score ≥ 7: fundamentalmente fuerte. ≤ 3: débil. Útil como filtro de
-selección de acciones: comprar solo empresas con F-Score ≥ 7.
+$F \ge 7$ 分代表基本面极其优秀强劲；$F \le 3$ 分代表企业处于财务恶化通道。是多因子选股体系中极其经典的排除与初筛滤网（例如硬性要求只买入 $F \ge 7$ 的公司）。
 
-### DuPont (descomposición ROE)
+### 杜邦五因子分解（DuPont Analysis）
 
 ```
-ROE = NI / Equity = Tax × Interest × Margin × Turnover × Leverage
-     = (NI/EBT) × (EBT/EBIT) × (EBIT/Rev) × (Rev/Assets) × (Assets/Equity)
+ROE = 净利润 / 净资产
+    = 税收负担 × 利息负担 × 息税前营业利润率 × 资产周转率 × 权益乘数
+    = (NI/EBT) × (EBT/EBIT) × (EBIT/Rev) × (Rev/Assets) × (Assets/Equity)
 ```
 
-Descompone el ROE en 5 factores que identifican la fuente del retorno:
-- **Tax burden**: cuánto retiene la empresa después de impuestos.
-- **Interest burden**: cuánto retiene después de intereses.
-- **Operating margin**: rentabilidad operativa (core business).
-- **Asset turnover**: eficiencia en uso de activos.
-- **Leverage**: apalancamiento financiero.
+将净资产收益率（ROE）精准拆解为驱动收益的五大本质源头：
+- **税收负担因子（Tax burden）**：税收筹划与有效税率对留存利润的影响。
+- **利息负担因子（Interest burden）**：财务债务成本对经营利润的侵蚀程度。
+- **营业利润率（Operating margin）**：主营业务核心产品与服务的真实盈利水平。
+- **资产周转率（Asset turnover）**：全部资产配置的运营转化效率。
+- **权益乘数（Leverage）**：资产负债表层面的财务杠杆放大倍数。
 
-Dos empresas con el mismo ROE pueden tener perfiles de riesgo muy distintos
-(ej: una con alto margin y bajo leverage, otra con bajo margin y alto
-leverage).
+两家 ROE 相同的企业可能有着天差地别的内在风险画像（例如一家依托极高的主营利润率与超低杠杆，而另一家则是薄利多销叠加高杠杆博取收益）。
 
-### Fuentes de datos
+### 支持的数据接入源
 
-Acepta DataFrames de: sec-data, marketwatch, investing, macrotrends,
-barchart, yahoo-finance, nasdaq-data, simplywallst, finviz.
+原生兼容读取解析来自各主流金融数据提供商的财务报表格式：sec-data, marketwatch, investing, macrotrends, barchart, yahoo-finance, nasdaq-data, simplywallst, finviz。
 
 ---
 
-## Clase 9: Sentimiento
+## 第 9 类：情绪特征指标（Sentiment）
 
-Sin implementación de código en este skill. Recursos en
-`references/OTHER_FEATURES.md`.
+本技能包未内置原生 NLP 代码实现。完整参考资源见 `references/OTHER_FEATURES.md`。
 
-**Papers clave:** Loughran-McDonald (2011) — diccionario financiero NLP.
-Tetlock (2007) — contenido de medios → precio. VADER (Hutto-Gilbert, 2014)
-— rule-based sentiment para redes sociales.
+**核心经典文献：** Loughran-McDonald (2011) 专用于 10-K/10-Q 财报的金融情感辞书；Tetlock (2007) 华尔街日报专栏舆情对股票收益的先导影响；VADER (Hutto-Gilbert, 2014) 针对社媒散户情绪的规则情感分析引擎。
 
-**Edge:** El sentimiento captura **narrativa** — ortogonal al precio y
-fundamentales. Permite detectar divergencias precio-sentimiento que ningún
-otro indicador captura.
+**量化优势（Edge）：** 市场情绪直接反映了**市场共识叙事（Narrative）**——在统计属性上完全正交于历史量价与静态财报数据。能够提前捕捉到“基本面优秀但舆论崩盘”或“业绩亏损但叙事极度亢奋”的极端反差，挖掘出常规技术指标无法捕捉的非对称博弈机会。
 
 ---
 
-## Clase 10: Exógenos
+## 第 10 类：外生宏观特征（Exogenous）
 
-Sin implementación de código. Recursos en `references/OTHER_FEATURES.md`.
+本技能包未内置原生代码实现。完整参考资源见 `references/OTHER_FEATURES.md`。
 
-**Categorías:** tasas (Fed Funds, T10Y), inflación (CPI, IPC), actividad
-(GDP, PMI), volatilidad (VIX), liquidez (M2), commodities, FX, on-chain.
+**核心宏观范畴：** 政策基准利率（美联储联邦基金利率 Fed Funds、10年期美债收益率 T10Y）、通胀指标（CPI、核心 PPI）、经济景气度（GDP 增长率、ISM 制造业 PMI）、流动性与风险偏好指标（VIX 波动率指数、广义货币供应量 M2）、大宗商品期货走势、外汇汇率、区块链链上原生数据等。
 
-**Edge:** Capturan el **régimen macro** que determina qué estrategias
-funcionan. Permiten rotar entre estrategias según el contexto económico,
-no operar siempre la misma.
+**量化优势（Edge）：** 刻画宏观市场**体制环境（Macro Regime）**，决定不同类型策略（成长 vs 价值、顺势 vs 逆势）的底层生命力。基于外生宏观特征构建动态策略路由引擎，在不同经济周期下自动切换主策略，避免用单一交易模型死扛所有宏观周期。
 
 ---
 
-## Resumen de Edges por Clase
+## 10 类特征的核心量化优势（Edge）总结
 
-| Clase | Dimensión | Edge técnico |
+| 类别编号与名称 | 所属信息维度 | 核心量化技术优势（Edge） |
 |-------|-----------|--------------|
-| 1a Trend | Dirección (filtro paso-bajo) | Más robusto en tendencias, fase lag conocida |
-| 1b Osciladores | Momentum (derivada) | Divergencias anticipan cambios (baja SNR, requiere filtro) |
-| 1c Contrarios | Saturación (colas de distribución) | Timing de reversión en rangos laterales |
-| 2 Flujo | Convicción (volumen) | Divergencias más confiables (smart money detection) |
-| 3 Combinados | Confluencia (normalización) | Elimina look-ahead bias vía rolling windows |
-| 4 Conteos | Frecuencia (Poisson/Binomial) | Ortogonal a mediciones continuas |
-| 5 Estacionalidad | Ciclos (Fourier/STL) | Features determinísticos sin rezago |
-| 6 Estadísticos | Forma de distribución | Detecta cambios de régimen de riesgo pre-crash |
-| 7 Referenciales | Relaciones (correlación) | Detecta cambios de régimen en correlaciones |
-| 8 Fundamentales | Salud contable (ratios) | Ortogonal al precio, filtro de selección |
-| 9 Sentimiento | Narrativa (NLP) | Detecta divergencias precio-relato |
-| 10 Exógenos | Contexto macro | Rotación de estrategias por régimen |
+| 1a 趋势跟踪 | 方向判断（低通滤波） | 趋势明确期稳健获利，相位滞后理论边界已知 |
+| 1b 振荡器 | 动能速度（一阶导数） | 顶底背离提前提示动能衰竭（信噪比较低，需配合门控） |
+| 1c 反转类 | 极值饱和（分布尾部） | 震荡箱体中均值回归的最佳入场与止盈点位捕捉 |
+| 2 资金流 | 市场信服力（成交量） | 量价背离更具可靠性，精准识别机构建仓与派发出货 |
+| 3 复合指标 | 信号共振（动态归一） | 严格基于滚动窗口消除未来函数与前瞻泄露 |
+| 4 离散计数 | 发生频率（泊松/二项） | 正交于连续时间序列，揭示隐蔽的极端尾部突发风险 |
+| 5 季节周期 | 时间周期（傅里叶/STL） | 具备数学确定性的无滞后周期特征，提前预判时间窗口 |
+| 6 统计特征 | 经验分布形态（偏度/峰度） | 提前感知波动率与肥尾风险的剧烈变化，预警暴跌危机 |
+| 7 基准相对 | 相对协同（跨资产相关） | 监控市场流动性挤兑危机下的全资产相关性异常飙升 |
+| 8 基本面 | 财务报表体质（会计比率） | 彻底正交于二级市场价格，强力剔除财务劣质与退市高危股 |
+| 9 情绪指标 | 市场舆情共识（NLP文本） | 捕捉价格与市场舆论叙事之间的预期差与非理性溢价 |
+| 10 外生特征 | 宏观经济体制环境 | 识别宏观周期状态，实现大类资产与量化策略的动态轮动 |

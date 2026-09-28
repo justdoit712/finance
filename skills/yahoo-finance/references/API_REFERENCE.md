@@ -1,39 +1,39 @@
-# Yahoo Finance API Reference Completa
+# Yahoo Finance API 完整参考手册
 
-> Documentación exhaustiva de los endpoints no oficiales de Yahoo Finance.
-> Actualizada a Junio 2026 — basada en ingeniería inversa de `yfinance` y testing directo.
-
----
-
-## Índice
-
-1. [Autenticación: Cookie + Crumb](#1-autenticación-cookie--crumb)
-2. [v8/finance/chart — Históricos OHLCV](#2-v8financechart--históricos-ohlcv)
-3. [v7/finance/quote — Precio en tiempo real](#3-v7financequote--precio-en-tiempo-real)
-4. [v10/finance/quoteSummary — Fundamentos](#4-v10financequotesummary--fundamentos)
-5. [v7/finance/options — Cadena de opciones](#5-v7financeoptions--cadena-de-opciones)
-6. [v1/finance/search — Búsqueda y noticias](#6-v1financesearch--búsqueda-y-noticias)
-7. [v6/finance/recommendationsbysymbol — Recomendaciones](#7-v6financerecommendationsbysymbol--recomendaciones)
-8. [v1/finance/trending — Trending symbols](#8-v1financetrending--trending-symbols)
-9. [v1/finance/lookup — Lookup de tickers](#9-v1financelookup--lookup-de-tickers)
-10. [v1/finance/screener — Screener](#10-v1financescreener--screener)
-11. [WebSocket streaming](#11-websocket-streaming)
-12. [Rate Limiting y Estrategias](#12-rate-limiting-y-estrategias)
-13. [Códigos de Error y Troubleshooting](#13-códigos-de-error-y-troubleshooting)
-14. [Tickers Internacionales](#14-tickers-internacionales)
-15. [Campos Comunes entre Endpoints](#15-campos-comunes-entre-endpoints)
+> Yahoo Finance 非官方接口详尽参考文档。  
+> 更新至 2026 年 6 月 —— 基于对 `yfinance` 的逆向工程与实际测试验证。
 
 ---
 
-## 1. Autenticación: Cookie + Crumb
+## 目录
 
-Yahoo usa un sistema **cookie + crumb** para proteger ciertos endpoints contra bots.
-No es OAuth ni requiere API key — es un CSRF token casero.
+1. [身份验证：Cookie + Crumb](#1-身份验证cookie--crumb)
+2. [v8/finance/chart — 历史 OHLCV 行情](#2-v8financechart--历史-ohlcv-行情)
+3. [v7/finance/quote — 实时行情报价](#3-v7financequote--实时行情报价)
+4. [v10/finance/quoteSummary — 基本面数据](#4-v10financequotesummary--基本面数据)
+5. [v7/finance/options — 期权链](#5-v7financeoptions--期权链)
+6. [v1/finance/search — 搜索与新闻](#6-v1financesearch--搜索与新闻)
+7. [v6/finance/recommendationsbysymbol — 相似标的推荐](#7-v6financerecommendationsbysymbol--相似标的推荐)
+8. [v1/finance/trending — 热门趋势标的](#8-v1financetrending--热门趋势标的)
+9. [v1/finance/lookup — 标的代码查询](#9-v1financelookup--标的代码查询)
+10. [v1/finance/screener — 选股器](#10-v1financescreener--选股器)
+11. [WebSocket 流式推送](#11-websocket-流式推送)
+12. [速率限制与应对策略](#12-速率限制与应对策略)
+13. [错误代码与故障排查](#13-错误代码与故障排查)
+14. [国际标的代码（Tickers）](#14-国际标的代码tickers)
+15. [跨接口通用字段规范](#15-跨接口通用字段规范)
 
-### Flujo completo
+---
+
+## 1. 身份验证：Cookie + Crumb
+
+Yahoo 采用 **Cookie + Crumb** 系统来保护特定接口免受爬虫与机器人滥用。  
+该机制既非 OAuth，也无需任何 API Key —— 它本质上是一个 Yahoo 自制的 CSRF Token。
+
+### 完整交互流程
 
 ```
-  Cliente                          Yahoo
+  客户端 (Client)                   Yahoo
     |                                |
     |  GET https://fc.yahoo.com      |
     |-------------------------------->|
@@ -41,7 +41,7 @@ No es OAuth ni requiere API key — es un CSRF token casero.
     |<--------------------------------|
     |                                |
     |  GET /v1/test/getcrumb         |
-    |  (con cookie A3)               |
+    |  (携带 Cookie A3)              |
     |-------------------------------->|
     |  crumb: "abcdef123456"         |
     |<--------------------------------|
@@ -49,11 +49,11 @@ No es OAuth ni requiere API key — es un CSRF token casero.
     |  GET /v7/finance/quote         |
     |  ?crumb=abcdef123456           |
     |-------------------------------->|
-    |  JSON con datos                |
+    |  JSON 响应数据                 |
     |<--------------------------------|
 ```
 
-### Implementación en Python
+### Python 实现示例
 
 ```python
 import requests
@@ -67,61 +67,61 @@ HEADERS = {
 def yahoo_session():
     s = requests.Session()
     s.headers.update(HEADERS)
-    s.get("https://fc.yahoo.com", timeout=10)          # paso 1: obtener cookie A3
-    crumb = s.get(f"{BASE}/v1/test/getcrumb", timeout=10).text.strip()  # paso 2: obtener crumb
-    s.params = {"crumb": crumb}                         # paso 3: adjuntar crumb a todas las requests
+    s.get("https://fc.yahoo.com", timeout=10)          # 步骤 1：获取 A3 Cookie
+    crumb = s.get(f"{BASE}/v1/test/getcrumb", timeout=10).text.strip()  # 步骤 2：获取 crumb
+    s.params = {"crumb": crumb}                         # 步骤 3：为所有后续请求附加 crumb 参数
     return s
 ```
 
-### Endpoints que requieren crumb
+### 按验证要求分类的接口
 
-| Endpoint | Requiere crumb |
-|----------|:--------------:|
-| `v8/finance/chart` | ❌ No |
-| `v7/finance/quote` | ✅ Sí |
-| `v10/finance/quoteSummary` | ✅ Sí |
-| `v7/finance/options` | ✅ Sí |
-| `v1/finance/search` | ❌ No |
-| `v6/finance/recommendationsbysymbol` | ✅ Sí |
-| `v1/finance/trending` | ❌ No |
-| `v1/finance/lookup` | ❌ No |
-| `v1/finance/screener` | ✅ Sí (a veces) |
+| 接口 (Endpoint) | 是否需要 Crumb |
+|-----------------|:--------------:|
+| `v8/finance/chart` | ❌ 否 |
+| `v7/finance/quote` | ✅ 是 |
+| `v10/finance/quoteSummary` | ✅ 是 |
+| `v7/finance/options` | ✅ 是 |
+| `v1/finance/search` | ❌ 否 |
+| `v6/finance/recommendationsbysymbol` | ✅ 是 |
+| `v1/finance/trending` | ❌ 否 |
+| `v1/finance/lookup` | ❌ 否 |
+| `v1/finance/screener` | ✅ 是（部分需要） |
 
-### El crumb expira
+### Crumb 的有效期限
 
-- El crumb tiene validez de ~unos minutos a varias horas.
-- No hay un TTL documentado. Si recibís `{"finance":{"error":{"code":"Bad Request"}}}`, hay que regenerar el crumb.
-- Estrategia segura: crear una nueva sesión por cada request que requiera crumb, o cachear y reintentar si falla.
+- Crumb 的有效期一般在数分钟到数小时不等。
+- Yahoo 官方没有文档化的 TTL。如果收到响应 `{"finance":{"error":{"code":"Bad Request"}}}`，说明需要重新生成 Crumb。
+- 稳健策略：为每个需要 Crumb 的请求单独初始化会话，或者在本地缓存并在调用失败时自动刷新重试。
 
 ---
 
-## 2. v8/finance/chart — Históricos OHLCV
+## 2. v8/finance/chart — 历史 OHLCV 行情
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v8/finance/chart/{symbol}
 ```
 
-### Parámetros
+### 请求参数
 
-| Parámetro | Valores | Obligatorio | Descripción |
-|-----------|---------|:-----------:|-------------|
-| `range` | `1d`, `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`, `10y`, `ytd`, `max` | No* | Período de tiempo |
-| `interval` | `1m`, `2m`, `5m`, `15m`, `30m`, `60m`, `1h`, `1d`, `1wk`, `1mo` | Sí | Frecuencia de los datos |
-| `period1` | Unix timestamp | No* | Fecha de inicio (alternativa a `range`) |
-| `period2` | Unix timestamp | No* | Fecha de fin (default: now) |
-| `events` | `div`, `splits`, `div,splits` | No | Incluir dividendos y/o splits |
-| `includePrePost` | `true`, `false` | No | Incluir datos pre/post market (intraday) |
+| 参数 | 取值范围 | 是否必填 | 描述说明 |
+|------|----------|:--------:|----------|
+| `range` | `1d`, `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`, `10y`, `ytd`, `max` | 否* | 时间跨度范围 |
+| `interval` | `1m`, `2m`, `5m`, `15m`, `30m`, `60m`, `1h`, `1d`, `1wk`, `1mo` | 是 | 行情采样周期/颗粒度 |
+| `period1` | Unix 时间戳 | 否* | 起始时间（与 `range` 二选一） |
+| `period2` | Unix 时间戳 | 否* | 结束时间（默认值：当前时间） |
+| `events` | `div`, `splits`, `div,splits` | 否 | 是否包含分红与拆股事件数据 |
+| `includePrePost` | `true`, `false` | 否 | 是否包含盘前与盘后交易数据（仅日内周期有效） |
 
-\* Usar `range` o `period1`/`period2`, no ambos.
+\* 注：使用 `range` 或 `period1`/`period2` 两者之一，不可同时传递。
 
-### Combinaciones range/interval válidas
+### 有效的 range 与 interval 搭配组合
 
-Típicamente Yahoo limita qué intervalos podés usar según el rango:
+Yahoo 对不同时间范围可使用的采样周期有明确限制：
 
-| Range | Intervales válidos |
-|-------|-------------------|
+| Range（范围） | 有效的 Intervals（采样周期） |
+|---------------|-----------------------------|
 | `1d` | `1m`, `2m`, `5m` |
 | `5d` | `1m`, `2m`, `5m`, `15m`, `30m` |
 | `1mo` | `1m`, `5m`, `15m`, `30m`, `60m`, `1h`, `1d` |
@@ -132,9 +132,9 @@ Típicamente Yahoo limita qué intervalos podés usar según el rango:
 | `5y` | `1d`, `1wk`, `1mo` |
 | `max` | `1d`, `1wk`, `1mo` |
 
-**Nota:** Intraday (`1m`, `5m`) solo retiene 7-60 días de datos.
+**注意：** 日内高频数据（如 `1m`, `5m`）通常仅保留最近 7 至 60 天的数据。
 
-### Respuesta JSON
+### JSON 响应结构
 
 ```json
 {
@@ -225,7 +225,7 @@ Típicamente Yahoo limita qué intervalos podés usar según el rango:
 }
 ```
 
-### Cómo parsear
+### 数据解析示例
 
 ```python
 r = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/AAPL",
@@ -234,32 +234,32 @@ r = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/AAPL",
 data = r.json()
 result = data["chart"]["result"][0]
 
-# Timestamps
+# 时间戳列表
 timestamps = result["timestamp"]
 
-# OHLCV como arrays paralelos
+# OHLCV 并行数组
 opens = result["indicators"]["quote"][0]["open"]
 highs = result["indicators"]["quote"][0]["high"]
 lows = result["indicators"]["quote"][0]["low"]
 closes = result["indicators"]["quote"][0]["close"]
 volumes = result["indicators"]["quote"][0]["volume"]
 
-# Precios ajustados
+# 复权收盘价
 adj_closes = result["indicators"]["adjclose"][0]["adjclose"]
 
-# Meta
+# 元数据
 meta = result["meta"]
 print(meta["symbol"], meta["currency"], meta["regularMarketPrice"])
 
-# Eventos
+# 公司行动事件
 events = result.get("events", {})
 dividends = events.get("dividends", {})
 splits = events.get("splits", {})
 ```
 
-### Arrays paralelos
+### 并行数组结构转换
 
-Los datos vienen como arrays paralelos indexados por timestamp. Para convertirlos a filas:
+返回的数据以按时间戳对齐的并行数组形式组织。若需将其转换为行记录（例如 DataFrame 格式）：
 
 ```python
 rows = []
@@ -275,47 +275,47 @@ for i in range(len(timestamps)):
     })
 ```
 
-### Dividendos y splits
+### 分红与拆股事件
 
-Los dividendos y splits vienen en un formato diferente (mapeados por timestamp como string):
+分红与拆股采用字典格式组织（以字符串形式的 Unix 时间戳作为键名）：
 
 ```python
 for ts_str, div in dividends.items():
-    print(f"Divi: ${div['amount']} en {datetime.fromtimestamp(int(ts_str))}")
+    print(f"分红: ${div['amount']}，除息日 {datetime.fromtimestamp(int(ts_str))}")
 
 for ts_str, split in splits.items():
-    print(f"Split: {split['numerator']}:{split['denominator']} "
-          f"en {datetime.fromtimestamp(int(ts_str))}")
+    print(f"拆股: {split['numerator']}:{split['denominator']} "
+          f"，生效日 {datetime.fromtimestamp(int(ts_str))}")
 ```
 
-### Notas importantes sobre v8/chart
+### v8/chart 关键注意事项
 
-- **Es el endpoint más estable** de Yahoo Finance. Funciona sin autenticación.
-- **User-Agent es obligatorio.** Sin un User-Agent de navegador, Yahoo devuelve error o datos vacíos.
-- **No usar con `yfinance`** — este skill usa requests directas.
-- Los `null` aparecen cuando no hay trading (fines de semana, feriados).
-- `adjclose` es crucial para backtesting porque ajusta por splits y dividendos.
+- **Yahoo Finance 中最稳定的接口**。无需身份验证即可正常调用。
+- **必须提供 User-Agent 请求头。** 如果缺少浏览器 User-Agent，Yahoo 将返回错误响应或空数据。
+- **无需使用 `yfinance`** —— 本技能直接通过 HTTP 请求与其通信。
+- 非交易时段（周末、法定假日）的行情点位将显示为 `null`。
+- `adjclose`（复权收盘价）对量化策略回测至关重要，因其已自动剔除拆股与现金分红的影响。
 
 ---
 
-## 3. v7/finance/quote — Precio en tiempo real
+## 3. v7/finance/quote — 实时行情报价
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol1},{symbol2},...
 ```
 
-**Requiere crumb** (ver sección [Autenticación](#1-autenticación-cookie--crumb)).
+**需要 Crumb 验证**（详见[身份验证](#1-身份验证cookie--crumb)一节）。
 
-### Parámetros
+### 请求参数
 
-| Parámetro | Descripción |
-|-----------|-------------|
-| `symbols` | Ticker(s) separados por coma (ej: `AAPL,MSFT,GOOGL`) |
-| `crumb` | Token de autenticación (se pasa automático con `yahoo_session()`) |
+| 参数 | 描述说明 |
+|------|----------|
+| `symbols` | 逗号分隔的标的代码（例如：`AAPL,MSFT,GOOGL`） |
+| `crumb` | 身份验证令牌（使用 `yahoo_session()` 时自动附带） |
 
-### Respuesta JSON
+### JSON 响应结构
 
 ```json
 {
@@ -441,91 +441,91 @@ GET https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol1},{symbol2
 }
 ```
 
-### Campos clave del quote
+### 行情核心字段说明
 
-| Campo Ruta | Tipo | Descripción |
-|-----------|------|-------------|
-| `regularMarketPrice.raw` | float | Precio actual |
-| `regularMarketChangePercent.raw` | float | Cambio % (ej: 1.23 = +1.23%) |
-| `regularMarketVolume.raw` | int | Volumen del día |
-| `regularMarketOpen.raw` | float | Apertura |
-| `regularMarketDayHigh.raw` | float | Máximo del día |
-| `regularMarketDayLow.raw` | float | Mínimo del día |
-| `regularMarketPreviousClose.raw` | float | Cierre anterior |
-| `fiftyTwoWeekHigh.raw` | float | Máximo 52 semanas |
-| `fiftyTwoWeekLow.raw` | float | Mínimo 52 semanas |
-| `marketCap.raw` | int | Capitalización bursátil |
-| `trailingPE.raw` | float | P/E ratio trailing |
-| `trailingAnnualDividendYield.raw` | float | Dividend yield |
-| `trailingAnnualDividendRate.raw` | float | Dividendo anual |
-| `dividendDate` | int | Próximo dividendo (Unix timestamp) |
-| `earningsTimestamp` | int | Próximo earnings (Unix timestamp) |
-| `shortName` | string | Nombre corto |
-| `longName` | string | Nombre largo |
-| `exchange` | string | Exchange (NMS, NYQ, NASDAQ, etc.) |
-| `marketState` | string | `PRE`, `REGULAR`, `POST`, `CLOSED` |
-| `currency` | string | Moneda (USD, ARS, etc.) |
-| `averageDailyVolume3Month.raw` | int | Volumen promedio 3 meses |
+| 字段路径 | 类型 | 描述说明 |
+|----------|------|----------|
+| `regularMarketPrice.raw` | float | 当前价格 |
+| `regularMarketChangePercent.raw` | float | 涨跌幅百分比（例如：1.23 表示 +1.23%） |
+| `regularMarketVolume.raw` | int | 当日成交量 |
+| `regularMarketOpen.raw` | float | 今日开盘价 |
+| `regularMarketDayHigh.raw` | float | 今日最高价 |
+| `regularMarketDayLow.raw` | float | 今日最低价 |
+| `regularMarketPreviousClose.raw` | float | 昨日收盘价 |
+| `fiftyTwoWeekHigh.raw` | float | 52 周最高价 |
+| `fiftyTwoWeekLow.raw` | float | 52 周最低价 |
+| `marketCap.raw` | int | 总市值 |
+| `trailingPE.raw` | float | 滚动市盈率 (TTM P/E) |
+| `trailingAnnualDividendYield.raw` | float | 滚动年化股息率 |
+| `trailingAnnualDividendRate.raw` | float | 滚动年化每股股息金额 |
+| `dividendDate` | int | 下次派息日期 (Unix 时间戳) |
+| `earningsTimestamp` | int | 下次财报发布时间 (Unix 时间戳) |
+| `shortName` | string | 标的简称 |
+| `longName` | string | 标的全称 |
+| `exchange` | string | 交易所代码（NMS, NYQ, NASDAQ 等） |
+| `marketState` | string | 市场状态：`PRE` (盘前), `REGULAR` (正常交易), `POST` (盘后), `CLOSED` (闭市) |
+| `currency` | string | 结算货币（USD, ARS, CNY 等） |
+| `averageDailyVolume3Month.raw` | int | 3 个月日均成交量 |
 
-### Notas
+### 注意事项
 
-- Los campos con `raw` y `fmt` son consistentes en todos los endpoints: `raw` es el valor numérico, `fmt` es el string formateado para mostrar.
-- `marketState` es útil para saber si el mercado está abierto.
-- `esgPopulated` indica si hay datos ESG disponibles.
+- 包含 `raw` 与 `fmt` 的字段在所有接口中保持完全一致：`raw` 是原始数值，适用于数值运算与量化策略；`fmt` 是格式化后的字符串，适用于界面展示。
+- `marketState` 非常适合用于判断当前目标市场是否处于开市交易时段。
+- `esgPopulated` 用于指示该标的是否存在 ESG 评分数据。
 
 ---
 
-## 4. v10/finance/quoteSummary — Fundamentos
+## 4. v10/finance/quoteSummary — 基本面数据
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules={mod1},{mod2}
 ```
 
-**Requiere crumb.**
+**需要 Crumb 验证。**
 
-### Módulos disponibles (33 total)
+### 全部可用模块（共 33 个）
 
-| # | Módulo | Descripción | Tamaño típico |
-|---|--------|-------------|:------------:|
-| 1 | `assetProfile` | Perfil completo: sector, industria, empleados, descripción, direcciones | Grande |
-| 2 | `summaryProfile` | Resumen del perfil (versión corta) | Pequeño |
-| 3 | `financialData` | Métricas financieras: EBITDA, revenue, profit margins, ROE, ROA, debt/equity | Mediano |
-| 4 | `defaultKeyStatistics` | Estadísticas: beta, market cap, shares outstanding, float, short ratio | Mediano |
-| 5 | `incomeStatementHistory` | Estado de resultados (varios años) | Grande |
-| 6 | `incomeStatementHistoryQuarterly` | Estado de resultados trimestral | Grande |
-| 7 | `balanceSheetHistory` | Balance general (varios años) | Grande |
-| 8 | `balanceSheetHistoryQuarterly` | Balance general trimestral | Grande |
-| 9 | `cashflowStatementHistory` | Flujo de caja (varios años) | Grande |
-| 10 | `cashflowStatementHistoryQuarterly` | Flujo de caja trimestral | Grande |
-| 11 | `earnings` | Ganancias históricas por trimestre | Mediano |
-| 12 | `earningsHistory` | EPS reportado vs estimado por trimestre | Mediano |
-| 13 | `earningsTrend` | Estimados de EPS futuros | Mediano |
-| 14 | `recommendationTrend` | Recomendaciones: strong buy, buy, hold, sell por período | Mediano |
-| 15 | `upgradeDowngradeHistory` | Historia de cambios de recomendación | Mediano |
-| 16 | `insiderTransactions` | Transacciones de insider (compra/venta) | Mediano |
-| 17 | `insiderHolders` | Tenedores insider y sus participaciones | Pequeño |
-| 18 | `institutionOwnership` | Tenencia de instituciones, cambios, % | Mediano |
-| 19 | `fundOwnership` | Tenencia de fondos mutuos | Mediano |
-| 20 | `majorDirectHolders` | Mayores tenedores directos | Pequeño |
-| 21 | `majorHoldersBreakdown` | % institutional, insider, público, otros | Pequeño |
-| 22 | `secFilings` | Últimos SEC filings (10-K, 10-Q, 8-K) | Mediano |
-| 23 | `calendarEvents` | Próximos earnings date, dividend date, ex-date | Pequeño |
-| 24 | `price` | Información detallada de precio, pre/post market, 52w | Mediano |
-| 25 | `quoteType` | Tipo: EQUITY, ETF, MUTUALFUND, INDEX, etc. | Pequeño |
-| 26 | `summaryDetail` | Bid, ask, volume, avg volume, yield, beta | Mediano |
-| 27 | `symbol` | Símbolo del ticker | Mínimo |
-| 28 | `topHoldings` | Top holdings (para ETFs) | Grande (solo ETFs) |
-| 29 | `fundProfile` | Perfil del fondo (para ETFs/Mutual Funds) | Grande (solo fondos) |
-| 30 | `indexTrend` | Tendencia del índice | Pequeño |
-| 31 | `sectorTrend` | Tendencia del sector | Pequeño |
-| 32 | `industryTrend` | Tendencia de la industria | Pequeño |
-| 33 | `netSharePurchaseActivity` | Actividad neta de recompra de acciones | Mediano |
+| # | 模块名 | 描述说明 | 典型响应体积 |
+|---|--------|----------|:------------:|
+| 1 | `assetProfile` | 标的完整概况：所属行业板块、细分行业、全职雇员数、业务描述、总部地址 | 大 |
+| 2 | `summaryProfile` | 标的概况摘要（简明版） | 小 |
+| 3 | `financialData` | 核心财务指标：EBITDA、营收、利润率、净资产收益率 (ROE)、资产回报率 (ROA)、负债权益比 (Debt/Equity) | 中 |
+| 4 | `defaultKeyStatistics` | 关键估值与交易统计指标：Beta 系数、总市值、流通股本、做空比例等 | 中 |
+| 5 | `incomeStatementHistory` | 利润表历史（按年度，包含多年） | 大 |
+| 6 | `incomeStatementHistoryQuarterly` | 季度利润表历史 | 大 |
+| 7 | `balanceSheetHistory` | 资产负债表历史（按年度，包含多年） | 大 |
+| 8 | `balanceSheetHistoryQuarterly` | 季度资产负债表历史 | 大 |
+| 9 | `cashflowStatementHistory` | 现金流量表历史（按年度，包含多年） | 大 |
+| 10 | `cashflowStatementHistoryQuarterly` | 季度现金流量表历史 | 大 |
+| 11 | `earnings` | 季度历史收益与年度盈利趋势 | 中 |
+| 12 | `earningsHistory` | 各季度每股收益 (EPS) 实际值 vs 市场预期值 | 中 |
+| 13 | `earningsTrend` | 未来盈利预期与分析师 EPS 预测趋势 | 中 |
+| 14 | `recommendationTrend` | 分析师评级走势：各周期内强力买入、买入、持有、卖出评级分布 | 中 |
+| 15 | `upgradeDowngradeHistory` | 券商评级上调/下调历史记录 | 中 |
+| 16 | `insiderTransactions` | 内部人士交易记录（高管/董事买入与卖出明细） | 中 |
+| 17 | `insiderHolders` | 内部持股人名单及持股数量 | 小 |
+| 18 | `institutionOwnership` | 机构投资者持股明细、变动及持股占比 | 中 |
+| 19 | `fundOwnership` | 共同基金持股明细 | 中 |
+| 20 | `majorDirectHolders` | 主要直接持股人 | 小 |
+| 21 | `majorHoldersBreakdown` | 股权结构分布（机构、内部人士、公众流通股等比例） | 小 |
+| 22 | `secFilings` | 最新 SEC 监管申报文件（10-K, 10-Q, 8-K 等） | 中 |
+| 23 | `calendarEvents` | 财经日历事件：下次财报发布日、分红派息日、除息日 | 小 |
+| 24 | `price` | 详细价格信息、盘前/盘后价格、52 周价格区间 | 中 |
+| 25 | `quoteType` | 标的资产类型：EQUITY, ETF, MUTUALFUND, INDEX 等 | 小 |
+| 26 | `summaryDetail` | 核心交易摘要：买价、卖价、成交量、平均成交量、股息率、Beta | 中 |
+| 27 | `symbol` | 标的代码 | 极小 |
+| 28 | `topHoldings` | 前大重仓持仓（仅限 ETF） | 大（仅限 ETF） |
+| 29 | `fundProfile` | 基金资料与分类属性（仅限 ETF / 共同基金） | 大（仅限基金） |
+| 30 | `indexTrend` | 指数趋势变化数据 | 小 |
+| 31 | `sectorTrend` | 板块趋势变化数据 | 小 |
+| 32 | `industryTrend` | 细分行业趋势变化数据 | 小 |
+| 33 | `netSharePurchaseActivity` | 股票回购与股份净申购活动 | 中 |
 
-### Módulos core recomendados
+### 推荐的核心模块组合
 
-Para un fetch rápido pero completo de cualquier equity:
+若需对任意股票标的进行快速且全面的基本面画像分析，建议请求以下核心模块组合：
 
 ```
 assetProfile,financialData,defaultKeyStatistics,
@@ -534,7 +534,7 @@ earnings,earningsTrend,recommendationTrend,
 calendarEvents,price,summaryDetail
 ```
 
-### Ejemplo de respuesta (assetProfile)
+### 响应示例（assetProfile）
 
 ```json
 {
@@ -583,7 +583,7 @@ calendarEvents,price,summaryDetail
 }
 ```
 
-### financialData
+### 财务指标示例（financialData）
 
 ```json
 {
@@ -622,32 +622,32 @@ calendarEvents,price,summaryDetail
 }
 ```
 
-### Campos útiles por módulo
+### 核心模块常用字段解析
 
-**defaultKeyStatistics:**
+**defaultKeyStatistics（关键估值统计）：**
 
-| Campo | Descripción |
-|-------|-------------|
-| `beta` | Beta (volatilidad vs mercado) |
-| `floatShares` | Acciones en float |
-| `sharesOutstanding` | Acciones outstanding |
-| `sharesShort` | Acciones en corto |
-| `shortRatio` | Short ratio (días para cubrir) |
-| `heldPercentInstitutions` | % tenencia institucional |
-| `heldPercentInsiders` | % tenencia insider |
-| `bookValue` | Book value per share |
-| `priceToBook` | Price/book ratio |
-| `earningsQuarterlyGrowth` | Crecimiento trimestral earnings |
-| `netIncomeToCommon` | Net income |
-| `trailingEps` | EPS trailing |
-| `forwardEps` | EPS forward |
-| `pegRatio` | PEG ratio |
-| `lastDividendValue` | Último dividendo |
-| `lastDividendDate` | Fecha último dividendo |
-| `nextFiscalYearEnd` | Fin del próximo año fiscal |
-| `mostRecentQuarter` | Último trimestre reportado |
+| 字段 | 描述说明 |
+|------|----------|
+| `beta` | Beta 系数（相对于市场基准的波动率） |
+| `floatShares` | 自由流通股本数 |
+| `sharesOutstanding` | 总发行流通股本数 |
+| `sharesShort` | 融券做空股数 |
+| `shortRatio` | 做空比率（补仓所需天数） |
+| `heldPercentInstitutions` | 机构投资者持股比例 |
+| `heldPercentInsiders` | 内部人士持股比例 |
+| `bookValue` | 每股净资产 (Book Value Per Share) |
+| `priceToBook` | 市净率 (P/B Ratio) |
+| `earningsQuarterlyGrowth` | 季度净利润同比增速 |
+| `netIncomeToCommon` | 归属于普通股股东的净利润 |
+| `trailingEps` | 滚动每股收益 (TTM EPS) |
+| `forwardEps` | 预期每股收益 (Forward EPS) |
+| `pegRatio` | PEG 比率（市盈率相对盈利增长比率） |
+| `lastDividendValue` | 最近一次派息每股分红额 |
+| `lastDividendDate` | 最近一次派息日期 (Unix 时间戳) |
+| `nextFiscalYearEnd` | 下一财年截止日 (Unix 时间戳) |
+| `mostRecentQuarter` | 最新财报报告期 (Unix 时间戳) |
 
-**incomeStatementHistory:**
+**incomeStatementHistory（利润表历史）：**
 
 ```json
 {
@@ -671,18 +671,18 @@ calendarEvents,price,summaryDetail
 
 ---
 
-## 5. v7/finance/options — Cadena de opciones
+## 5. v7/finance/options — 期权链
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v7/finance/options/{symbol}
 GET https://query1.finance.yahoo.com/v7/finance/options/{symbol}?date={unix_timestamp}
 ```
 
-**Requiere crumb.**
+**需要 Crumb 验证。**
 
-### Respuesta JSON
+### JSON 响应结构
 
 ```json
 {
@@ -753,67 +753,67 @@ GET https://query1.finance.yahoo.com/v7/finance/options/{symbol}?date={unix_time
 }
 ```
 
-### Campos de cada opción
+### 期权合约字段说明
 
-| Campo | Descripción |
-|-------|-------------|
-| `contractSymbol` | Símbolo OCC de la opción |
-| `strike` | Strike price |
-| `lastPrice` | Último precio tradeado |
-| `bid` | Bid actual |
-| `ask` | Ask actual |
-| `volume` | Volumen del día |
-| `openInterest` | Open interest |
-| `impliedVolatility` | Volatilidad implícita |
-| `inTheMoney` | Si está ITM (boolean) |
-| `expiration` | Timestamp de expiración |
-| `change` | Cambio en precio |
-| `percentChange` | Cambio porcentual |
-| `contractSize` | Tamaño del contrato (REGULAR = 100 acciones) |
+| 字段 | 描述说明 |
+|------|----------|
+| `contractSymbol` | OCC 标准期权合约代码 |
+| `strike` | 行权价 (Strike Price) |
+| `lastPrice` | 最新成交价 |
+| `bid` | 当前最高买价 |
+| `ask` | 当前最低卖价 |
+| `volume` | 当日成交量 |
+| `openInterest` | 未平仓合约数 (Open Interest) |
+| `impliedVolatility` | 隐含波动率 (IV) |
+| `inTheMoney` | 是否为实值期权（布尔值，true 表示实值期权） |
+| `expiration` | 到期日 Unix 时间戳 |
+| `change` | 价格涨跌额 |
+| `percentChange` | 涨跌幅百分比 |
+| `contractSize` | 合约乘数（REGULAR 通常对应 100 股标的股票） |
 
-### Cómo obtener todas las expiraciones
+### 如何获取所有到期日的期权链
 
 ```python
-# 1. Obtener fechas de expiración
+# 1. 获取所有到期日列表
 r = session.get("https://query1.finance.yahoo.com/v7/finance/options/AAPL")
 data = r.json()
 expirations = data["optionChain"]["result"][0]["expirationDates"]
 
-# 2. Iterar cada fecha
-for exp in expirations[:5]:  # primeras 5
+# 2. 依次遍历每个到期日
+for exp in expirations[:5]:  # 获取前 5 个到期日
     r = session.get(f"https://query1.finance.yahoo.com/v7/finance/options/AAPL?date={exp}")
     data = r.json()
     options = data["optionChain"]["result"][0]["options"][0]
     calls = options["calls"]
     puts = options["puts"]
-    print(f"Exp {datetime.fromtimestamp(exp)}: {len(calls)} calls, {len(puts)} puts")
+    print(f"到期日 {datetime.fromtimestamp(exp)}: {len(calls)} 看涨期权(calls), {len(puts)} 看跌期权(puts)")
     time.sleep(0.5)
 ```
 
-> **Nota:** Las opciones fuera de US stocks generalmente no están disponibles. Para GGAL (BCBA), este endpoint puede devolver vacío.
+> **注意：** 美股以外的标的一般不提供期权数据。例如布宜诺斯艾利斯证券交易所的 GGAL (BCBA)，该接口可能返回空结果。
 
 ---
 
-## 6. v1/finance/search — Búsqueda y noticias
+## 6. v1/finance/search — 搜索与新闻
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v1/finance/search?q={query}
 ```
 
-**No requiere autenticación.**
+**无需身份验证。**
 
-### Parámetros
+### 请求参数
 
-| Parámetro | Default | Descripción |
-|-----------|---------|-------------|
-| `q` | — | Término de búsqueda (requerido) |
-| `quotesCount` | 10 | Cantidad de quotes a retornar |
-| `newsCount` | 10 | Cantidad de noticias a retornar |
-| `enableCb` | false | Incluir commercial banking results |
+| 参数 | 默认值 | 描述说明 |
+|------|--------|----------|
+| `q` | — | 搜索关键词（必填） |
+| `quotesCount` | 10 | 返回的标的报价数量 |
+| `newsCount` | 10 | 返回的新闻条数 |
+| `enableCb` | false | 是否包含商业银行相关结果 |
 
-### Respuesta JSON
+### JSON 响应结构
 
 ```json
 {
@@ -855,26 +855,26 @@ GET https://query1.finance.yahoo.com/v1/finance/search?q={query}
 }
 ```
 
-### Notas
+### 注意事项
 
-- Ideal para **autocompletado** y **búsqueda de tickers** cuando no se sabe el símbolo exacto.
-- Las noticias incluyen `thumbnail` con imágenes.
-- El campo `typeDisp` ayuda a identificar el tipo: `Equity`, `ETF`, `Mutual Fund`, `Index`, etc.
-- Si el ticker no existe, `quotes` viene vacío pero puede haber `news`.
+- 适用于在标的代码不确定时的**自动补全**与**标的快速查询**。
+- 新闻数据包含带有配图 URL 与尺寸信息的 `thumbnail` 对象。
+- `typeDisp` 字段有助于准确识别资产类型：`Equity`（股票）、`ETF`、`Mutual Fund`（共同基金）、`Index`（指数）等。
+- 若所搜标的不存在，`quotes` 数组将为空，但仍可能返回相关的 `news`。
 
 ---
 
-## 7. v6/finance/recommendationsbysymbol — Recomendaciones
+## 7. v6/finance/recommendationsbysymbol — 相似标的推荐
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v6/finance/recommendationsbysymbol/{symbol}
 ```
 
-**Requiere crumb.**
+**需要 Crumb 验证。**
 
-### Respuesta JSON
+### JSON 响应结构
 
 ```json
 {
@@ -895,27 +895,27 @@ GET https://query1.finance.yahoo.com/v6/finance/recommendationsbysymbol/{symbol}
 }
 ```
 
-Devuelve símbolos **recomendados similares** (no recomendaciones de analistas, eso está en `quoteSummary.recommendationTrend`).
+该接口返回与目标标的**具有相似业务属性的推荐标的代码**及相关性得分（注意：此为基于标的属性的算法推荐，而非分析师买卖评级；分析师评级请参考 `quoteSummary.recommendationTrend`）。
 
 ---
 
-## 8. v1/finance/trending — Trending symbols
+## 8. v1/finance/trending — 热门趋势标的
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v1/finance/trending/{country}
 ```
 
-**No requiere autenticación.**
+**无需身份验证。**
 
-### Parámetros
+### 请求参数
 
-| Parámetro | Valores |
-|-----------|---------|
+| 参数 | 可选国家/地区代码 |
+|------|-------------------|
 | `country` | `US`, `AU`, `CA`, `DE`, `HK`, `IN`, `MX`, `MY`, `NZ`, `SG`, `UK`, `VN` |
 
-### Respuesta JSON
+### JSON 响应结构
 
 ```json
 {
@@ -939,33 +939,33 @@ GET https://query1.finance.yahoo.com/v1/finance/trending/{country}
 }
 ```
 
-### Notas
+### 注意事项
 
-- Los trending cambian cada ~15 minutos.
-- `US` funciona bien; otros países pueden tener menos datos.
+- 热门趋势列表每隔约 15 分钟更新一次。
+- `US`（美国市场）的数据最为全面稳定；其他国家/地区可能数据较少。
 
 ---
 
-## 9. v1/finance/lookup — Lookup de tickers
+## 9. v1/finance/lookup — 标的代码查询
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v1/finance/lookup?query={query}&type=equity
 ```
 
-**No requiere autenticación.**
+**无需身份验证。**
 
-### Parámetros
+### 请求参数
 
-| Parámetro | Descripción |
-|-----------|-------------|
-| `query` | Término de búsqueda |
-| `type` | `equity`, `option`, `future`, `currency` |
-| `lang` | Idioma (default: en-US) |
-| `region` | Región (default: US) |
+| 参数 | 描述说明 |
+|------|----------|
+| `query` | 检索关键词 |
+| `type` | 资产类别：`equity`（股票）, `option`（期权）, `future`（期货）, `currency`（货币） |
+| `lang` | 语言代码（默认值：`en-US`） |
+| `region` | 地区代码（默认值：`US`） |
 
-### Respuesta JSON
+### JSON 响应结构
 
 ```json
 {
@@ -980,28 +980,28 @@ GET https://query1.finance.yahoo.com/v1/finance/lookup?query={query}&type=equity
 
 ---
 
-## 10. v1/finance/screener — Screener
+## 10. v1/finance/screener — 选股器
 
-### Endpoint
+### 接口地址
 
 ```
 GET https://query1.finance.yahoo.com/v1/finance/screener?scrIds={scrId}&count={count}
 ```
 
-**Requiere crumb** (a veces).
+**有时需要 Crumb 验证。**
 
-### Screeners predefinidos comunes
+### 常用预设选股器策略
 
-| scrId | Descripción |
-|-------|-------------|
-| `most_actives` | Más activos |
-| `day_gainers` | Mayores ganadores del día |
-| `day_losers` | Mayores perdedores del día |
-| `undervalued_growth_stocks` | Crecimiento infravalorados |
-| `aggressive_small_caps` | Small caps agresivos |
-| `portfolio_anchors` | Anclas de portfolio |
+| scrId | 策略描述 |
+|-------|----------|
+| `most_actives` | 最活跃股票（按成交量/成交额） |
+| `day_gainers` | 今日涨幅榜 |
+| `day_losers` | 今日跌幅榜 |
+| `undervalued_growth_stocks` | 低估值成长股 |
+| `aggressive_small_caps` | 进取型小盘股 |
+| `portfolio_anchors` | 核心持仓基石股 |
 
-### Ejemplo
+### 调用示例
 
 ```python
 s = yahoo_session()
@@ -1014,15 +1014,15 @@ for quote in data["finance"]["result"][0]["quotes"]:
 
 ---
 
-## 11. WebSocket streaming
+## 11. WebSocket 流式推送
 
-Yahoo Finance tiene un endpoint WebSocket para datos en tiempo real:
+Yahoo Finance 提供了用于获取实时行情的 WebSocket 接口端点：
 
 ```
 wss://streamer.finance.yahoo.com/?version=2
 ```
 
-### Uso básico
+### 基础用法示例
 
 ```python
 import websocket
@@ -1036,35 +1036,35 @@ ws = websocket.WebSocketApp("wss://streamer.finance.yahoo.com/?version=2",
 ws.run_forever()
 ```
 
-Los mensajes usan **formato Protobuf** — no es straight JSON. Requiere manejo de crumb y firma. Es más complejo que los endpoints REST y **no está recomendado** para uso general. Los endpoints REST con polling cada 20-30 segundos son más estables.
+数据消息使用 **Protobuf 格式** 编码，而非纯 JSON 格式。客户端需要处理 Crumb 签名与鉴权握手。其实现复杂度远高于 REST 接口，在常规数据采集与量化研究场景中**不推荐使用**。采用每隔 20-30 秒轮询一次的 REST 接口方案更为稳健高效。
 
 ---
 
-## 12. Rate Limiting y Estrategias
+## 12. 速率限制与应对策略
 
-### Límites observados
+### 实际观测的限流阈值
 
-| Límite | Consecuencia |
-|--------|-------------|
-| ~2 requests/segundo | Límite seguro |
-| 3-5 req/s sostenidos | 429 Too Many Requests |
-| >10 req/s en ráfaga | IP block temporal (30-60 min) |
-| ~2000 req/hora estimado | Límite diario suave |
+| 请求频率 | 后果与系统表现 |
+|----------|----------------|
+| ~2 请求/秒 | 绝对安全阈值 |
+| 持续 3-5 请求/秒 | 极高概率触发 429 Too Many Requests 错误 |
+| 突发 >10 请求/秒 | 临时封禁 IP（通常持续 30-60 分钟） |
+| 预估约 2000 请求/小时 | 软性每日请求上限 |
 
-### Estrategia recomendada
+### 推荐的重试策略
 
 ```python
 import time
 import random
 
 def safe_request(func, *args, retries=3, **kwargs):
-    """Wrapper con exponential backoff."""
+    """采用指数退避算法的请求封装函数。"""
     for attempt in range(retries):
         try:
             resp = func(*args, **kwargs)
             if resp.status_code == 429:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                print(f"Rate limited, waiting {wait:.1f}s...")
+                print(f"触发限流，等待 {wait:.1f} 秒后重试...")
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
@@ -1076,7 +1076,7 @@ def safe_request(func, *args, retries=3, **kwargs):
             time.sleep(wait)
 ```
 
-### Rotación de User-Agent
+### User-Agent 轮换机制
 
 ```python
 USER_AGENTS = [
@@ -1089,9 +1089,9 @@ USER_AGENTS = [
 headers = {"User-Agent": random.choice(USER_AGENTS)}
 ```
 
-### Cacheo de respuestas
+### 响应数据本地缓存
 
-Los datos históricos no cambian. Para datos en lote:
+历史行情数据是不变的。对于批量拉取任务，建议在本地建立缓存以避免重复请求：
 
 ```python
 import os
@@ -1120,25 +1120,25 @@ def cached_get(url, params, ttl_seconds=3600):
 
 ---
 
-## 13. Códigos de Error y Troubleshooting
+## 13. 错误代码与故障排查
 
-| Error | Causa | Solución |
-|-------|-------|----------|
-| `401 Unauthorized` | Falta crumb o cookie A3 | Usar `yahoo_session()` |
-| `429 Too Many Requests` | Excediste rate limit | Esperar 30-60s, reducir frecuencia |
-| `{"finance":{"error":{"code":"Bad Request"}}}` | Crumb inválido/expirado | Regenerar crumb |
-| `chart.result` vacío o `null` | Ticker inválido, sin datos en ese rango/interval | Verificar símbolo. Cambiar rango |
-| `Quote data missing` | El símbolo no tiene quote pública | Verificar que el ticker existe |
-| Conexión rechazada | `query1.finance.yahoo.com` no responde | Fallback a `query2.finance.yahoo.com` |
-| Empty JSON `{}` | Rate limit o bloqueo temporal | Esperar y reintentar con exponential backoff |
-| `chart.error.code: "Not Found"` | Símbolo no encontrado | Verificar ticker (ej: usar .BA para argentinos) |
-| `Python-requests/2.xx` detectado | User-Agent por defecto | Setear User-Agent de navegador |
-| SSL Error | Problemas de red/certificado | Reintentar, verificar conectividad |
+| 错误信息 | 原因分析 | 解决方案 |
+|----------|----------|----------|
+| `401 Unauthorized` | 缺少 Crumb 或 A3 Cookie | 使用 `yahoo_session()` 初始化会话 |
+| `429 Too Many Requests` | 超过接口访问速率限制 | 等待 30-60 秒后重试，降低请求频率 |
+| `{"finance":{"error":{"code":"Bad Request"}}}` | Crumb 无效或已过期 | 重新获取并生成新的 Crumb |
+| `chart.result` 为空或为 `null` | 标的代码无效，或指定的时间范围/采样周期无数据 | 检查代码是否正确；尝试调整 `range` 或 `interval` |
+| `Quote data missing` | 该标的未公开报价数据 | 确认该标的代码在 Yahoo 上是否存在 |
+| 连接被拒绝 (Connection Refused) | 主域名 `query1.finance.yahoo.com` 无响应 | 降级备用域名 `query2.finance.yahoo.com` |
+| 返回空 JSON `{}` | 遭遇限流或 IP 临时受限 | 暂停请求，使用指数退避算法重试 |
+| `chart.error.code: "Not Found"` | 未找到该标的 | 检查代码后缀（如阿根廷标的须加 `.BA`） |
+| 检测到 `Python-requests/2.xx` | 使用了 requests 库默认的 User-Agent | 设置为常见浏览器的 User-Agent |
+| SSL Error | 网络异常或证书握手失败 | 重试请求，检查网络代理及网络连通性 |
 
-### Debugging rápido
+### 快速调试代码
 
 ```python
-# Verificar si un ticker existe
+# 验证标的代码是否存在
 r = requests.get(
     "https://query1.finance.yahoo.com/v1/finance/lookup",
     params={"query": "GGAL", "type": "equity"},
@@ -1146,7 +1146,7 @@ r = requests.get(
 )
 print(r.json())
 
-# Verificar crumb
+# 验证 Crumb 是否能正常获取
 s = requests.Session()
 s.headers.update(HEADERS)
 s.get("https://fc.yahoo.com")
@@ -1156,34 +1156,34 @@ print(f"Crumb: {crumb}")
 
 ---
 
-## 14. Tickers Internacionales
+## 14. 国际标的代码（Tickers）
 
-Yahoo Finance maneja tickers de todo el mundo con **sufijos de exchange**:
+Yahoo Finance 通过**交易所后缀**支持全球各大证券市场的行情代码：
 
-| País/Mercado | Sufijo | Ejemplo |
-|-------------|--------|---------|
-| Argentina (BCBA) | `.BA` | `GGAL.BA`, `YPFD.BA`, `PAMP.BA` |
-| Brasil (Bovespa) | `.SA` | `PETR4.SA`, `VALE3.SA` |
-| México (BMV) | `.MX` | `WALMEX.MX`, `CEMEX.CPO.MX` |
-| Canadá (TSX) | `.TO` | `SHOP.TO`, `TD.TO` |
-| Reino Unido (LSE) | `.L` | `HSBA.L`, `BP.L` |
-| Alemania (Xetra) | `.DE` | `SAP.DE`, `DAI.DE` |
-| Hong Kong (HKEX) | `.HK` | `0700.HK`, `9988.HK` |
-| Japón (TSE) | `.T` | `7203.T`, `9984.T` |
-| Australia (ASX) | `.AX` | `CBA.AX`, `BHP.AX` |
-| China (Shanghai) | `.SS` | `600519.SS` |
-| China (Shenzhen) | `.SZ` | `000858.SZ` |
-| India (NSE) | `.NS` | `RELIANCE.NS`, `TCS.NS` |
-| India (BSE) | `.BO` | `RELIANCE.BO` |
-| ETFs | Sin sufijo | `SPY`, `QQQ`, `ARKK` |
-| Crypto | `-XXX` | `BTC-USD`, `ETH-USD`, `DOGE-USD` |
-| Forex | `=X` | `EURUSD=X`, `USDBRL=X` |
-| Índices | `^` prefix | `^GSPC` (S&P 500), `^IXIC` (NASDAQ), `^BVSP` (Ibovespa) |
+| 国家/市场 | 后缀 | 示例 |
+|-----------|------|------|
+| 阿根廷 (BCBA) | `.BA` | `GGAL.BA`, `YPFD.BA`, `PAMP.BA` |
+| 巴西 (Bovespa) | `.SA` | `PETR4.SA`, `VALE3.SA` |
+| 墨西哥 (BMV) | `.MX` | `WALMEX.MX`, `CEMEX.CPO.MX` |
+| 加拿大 (TSX) | `.TO` | `SHOP.TO`, `TD.TO` |
+| 英国 (LSE) | `.L` | `HSBA.L`, `BP.L` |
+| 德国 (Xetra) | `.DE` | `SAP.DE`, `DAI.DE` |
+| 中国香港 (HKEX) | `.HK` | `0700.HK`, `9988.HK` |
+| 日本 (TSE) | `.T` | `7203.T`, `9984.T` |
+| 澳大利亚 (ASX) | `.AX` | `CBA.AX`, `BHP.AX` |
+| 中国 (上交所) | `.SS` | `600519.SS` |
+| 中国 (深交所) | `.SZ` | `000858.SZ` |
+| 印度 (NSE) | `.NS` | `RELIANCE.NS`, `TCS.NS` |
+| 印度 (BSE) | `.BO` | `RELIANCE.BO` |
+| ETF 基金 | 无后缀 | `SPY`, `QQQ`, `ARKK` |
+| 加密货币 | `-XXX` | `BTC-USD`, `ETH-USD`, `DOGE-USD` |
+| 外汇汇率 | `=X` | `EURUSD=X`, `USDBRL=X` |
+| 市场指数 | 前缀 `^` | `^GSPC` (标普500), `^IXIC` (纳斯达克), `^BVSP` (巴西伊波韦斯帕指数) |
 
-### Ejemplo con ticker argentino
+### 国际标的代码查询示例
 
 ```python
-# GGAL en la Bolsa de Buenos Aires
+# 查询布宜诺斯艾利斯证券交易所的 GGAL 行情
 r = requests.get(
     "https://query1.finance.yahoo.com/v8/finance/chart/GGAL.BA",
     params={"range": "1y", "interval": "1d"},
@@ -1192,56 +1192,56 @@ r = requests.get(
 print(r.json())
 ```
 
-> **Importante:** No todos los endpoints funcionan para tickers internacionales. `v7/options` generalmente solo funciona para US stocks. `v10/quoteSummary` funciona para la mayoría de los mercados.
+> **重要提示：** 并非所有接口都支持国际标的。例如 `v7/options` 通常仅支持美股期权；而 `v10/quoteSummary` 则支持绝大多数国际市场。
 
 ---
 
-## 15. Campos Comunes entre Endpoints
+## 15. 跨接口通用字段规范
 
-### Formato `raw` / `fmt`
+### `raw` 与 `fmt` 格式规范
 
-Casi todos los campos numéricos en Yahoo Finance vienen en este formato:
+Yahoo Finance 中几乎所有数值型字段均采用这种键值对结构：
 
 ```json
 {
   "regularMarketPrice": {
-    "raw": 196.89,       # valor numérico para cálculos
-    "fmt": "196.89"      # string formateado para mostrar
+    "raw": 196.89,       # 用于计算的原始数值 (float/int)
+    "fmt": "196.89"      # 用于前端展示的格式化字符串
   }
 }
 ```
 
-Siempre usar `.raw` para operaciones matemáticas y `.fmt` para display.
+在量化计算与指标运算中**始终使用 `.raw`**，在图表展示与打印输出时使用 `.fmt`。
 
-### Market states
+### 市场交易状态（Market states）
 
-| Valor | Significado |
-|-------|-------------|
-| `PRE` | Pre-market (antes de la apertura) |
-| `REGULAR` | Mercado abierto en horario regular |
-| `POST` | Post-market (después del cierre) |
-| `CLOSED` | Mercado cerrado |
+| 状态值 | 含义解释 |
+|--------|----------|
+| `PRE` | 盘前交易（美东时间开盘前） |
+| `REGULAR` | 正常交易时段（开盘中） |
+| `POST` | 盘后交易（美东时间收盘后） |
+| `CLOSED` | 休市/闭市状态 |
 
-### Quote types comunes
+### 常见资产报价类型（Quote types）
 
-| quoteType | Descripción |
-|-----------|-------------|
-| `EQUITY` | Acción común |
-| `ETF` | Exchange-Traded Fund |
-| `MUTUALFUND` | Fondo mutuo |
-| `INDEX` | Índice de mercado |
-| `CURRENCY` | Par de divisas |
-| `CRYPTOCURRENCY` | Criptomoneda |
-| `OPTION` | Opción |
-| `FUTURE` | Futuro |
-| `BOND` | Bono |
+| quoteType | 资产类别说明 |
+|-----------|--------------|
+| `EQUITY` | 普通股股票 |
+| `ETF` | 交易型开放式指数基金 (ETF) |
+| `MUTUALFUND` | 共同基金 / 公募基金 |
+| `INDEX` | 市场指数 |
+| `CURRENCY` | 法定货币汇率对 |
+| `CRYPTOCURRENCY` | 加密货币 |
+| `OPTION` | 期权合约 |
+| `FUTURE` | 期货合约 |
+| `BOND` | 债券 |
 
 ---
 
-## Apéndice: Resumen de URLs rápidas
+## 附录：快速 URL 参考汇总
 
 ```
-# Sin autenticación
+# 无需身份验证
 GET https://query1.finance.yahoo.com/v8/finance/chart/{symbol}
 GET https://query1.finance.yahoo.com/v1/finance/search
 GET https://query1.finance.yahoo.com/v1/finance/trending/{country}
@@ -1249,7 +1249,7 @@ GET https://query1.finance.yahoo.com/v1/finance/lookup
 GET https://fc.yahoo.com
 GET https://query1.finance.yahoo.com/v1/test/getcrumb
 
-# Requieren crumb (usar yahoo_session())
+# 需要 Crumb 验证（使用 yahoo_session()）
 GET https://query1.finance.yahoo.com/v7/finance/quote
 GET https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}
 GET https://query1.finance.yahoo.com/v7/finance/options/{symbol}
@@ -1259,5 +1259,5 @@ GET https://query1.finance.yahoo.com/v1/finance/screener
 
 ---
 
-*Este documento se basa en ingeniería inversa de la API no oficial de Yahoo Finance.
-No hay garantías de disponibilidad o consistencia. Los endpoints pueden cambiar sin aviso.*
+*本文档基于对 Yahoo Finance 非官方接口的逆向工程整理而成。  
+不保证接口的长期可用性或数据一致性，相关端点可能会在未经提前通知的情况下变更。*

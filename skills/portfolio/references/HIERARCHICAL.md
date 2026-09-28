@@ -1,101 +1,96 @@
-# Métodos Jerárquicos: HRP, HERC, NCO
+# 层次化投资组合构建方法：HRP、HERC 与 NCO
 
-## Motivación
+## 核心设计动因（Motivation）
 
-Markowitz tiene un problema grave: las soluciones óptimas son muy inestables
-con ruido (típico de la bolsa). Clusterizar grupos de activos y construir
-sub-portafolios permite promediar errores de ruido blanco dentro de clusters
-de activos similares.
+经典的马科维茨（Markowitz）均值-方差优化存在一个致命缺陷：由于涉及对经验协方差矩阵直接求逆，矩阵的高条件数会导致最优权重解对历史收益中的随机高斯噪声极度敏感（在学术界被称为“误差放大器”）。
 
-Por ejemplo, en lugar de calcular covarianzas GGAL↔BTC, GGAL↔ETH, BBAR↔BTC, etc.
-(ruidosas), armamos un sub-portafolio de ADRs y otro de cryptos: la covarianza
-entre ambos portafolios es más robusta.
+通过机器学习聚类算法将同质资产分组，并在簇内构建子组合，能够有效对冲并平滑簇内类似资产之间的随机白噪声。
 
-## Distancia y Clustering
+例如，与其直接计算阿根廷银行 ADR（如 GGAL、BBAR）与加密货币（BTC、ETH）之间充满高频噪声的交叉协方差，不如先分别构建一个“银行股子组合”与一个“加密资产子组合”，再基于这两个低维稳健的子组合计算宏观大类协方差，从而显著提升资产配置的样本外稳健性。
 
-### Correlación a Distancia
+## 距离度量与层次聚类（Distance and Clustering）
+
+### 相关系数到欧氏距离的映射
 
 ```
-d = sqrt(2 * (1 - rho))
+d = sqrt(2 · (1 − ρ))
 ```
 
-Es una métrica de distancia Euclídea propia.
+该变换将取值在 $[-1, 1]$ 之间的相关系数 $\rho$ 映射为严格满足非负性、对称性与三角不等式的真欧几里得距离度量（Euclidean Distance Metric）。
 
-### Métodos de Linkage
+### 聚类联动算法（Linkage Methods）
 
-| Método | Descripción | Cuándo usar |
+| 联动方法 | 算法机制说明 | 适用场景与选型建议 |
 |--------|-------------|-------------|
-| `single` | Menor distancia entre elementos | Conservador, evita agrupaciones agresivas |
-| `complete` | Mayor distancia entre elementos | Clusters bien separados |
-| `average` | Promedio de distancias | Balance |
-| `ward` | Minimiza varianza intra-cluster | **Recomendado** para finanzas |
-| `centroid` | Distancia entre centroides | Fácil interpretación |
-| `median` | Similar a centroid pero robusto | Con ruido/outliers |
+| `single`（单联动） | 取两个聚类簇中元素之间的**最小**距离 | 偏向保守，避免剧烈聚合，但容易产生链式效应 |
+| `complete`（全联动） | 取两个聚类簇中元素之间的**最大**距离 | 倾向于生成直径紧凑、边界清晰的紧密簇 |
+| `average`（平均联动） | 计算两个聚类簇所有元素对之间的平均距离 | 在单联动与全联动之间取得均衡折中 |
+| `ward`（沃德方差最小化法） | 每次合并使簇内总方差增量最小化 | **金融量化领域的黄金标准推荐方法** |
+| `centroid`（重心法） | 计算两个聚类簇几何重心质心之间的欧氏距离 | 直观几何解释性强 |
+| `median`（中位数法） | 类似于重心法，但赋予合并簇平等的权重 | 对极端异常值具有更强的抗噪鲁棒性 |
 
-### Medidas de Codependencia
+### 资产协动性度量（Codependence Measures）
 
-| Medida | Descripción |
+| 度量指标 | 数学机制 |
 |--------|-------------|
-| `pearson` | Correlación lineal |
-| `spearman` | Correlación de rangos (monótona) |
-| `kendall` | Concordancia de pares |
-| `distance` | Distancia Euclídea entre retornos |
-| `mutual_info` | Dependencia total (lineal + no lineal) |
+| `pearson` | 标准皮尔逊线性相关系数 |
+| `spearman` | 斯皮尔曼秩相关（捕捉任意单调非线性关系） |
+| `kendall` | 肯德尔和谐系数（基于成对数据符号一致性） |
+| `distance` | 资产历史收益率序列之间的欧几里得距离 |
+| `mutual_info` | 信息论互信息（同时捕捉任意复杂的线性与非线性依赖） |
 
-## HRP — Hierarchical Risk Parity (Lopez de Prado, 2016)
+## HRP — 层次化风险平价（Hierarchical Risk Parity, Marcos López de Prado, 2016）
 
-Algoritmo:
-1. Calcular matriz de correlación → distancia → linkage → cuasi-diagonal
-2. Recursively bisect el dendrograma
-3. En cada división, asignar pesos inversamente proporcionales a la
-   varianza de cada sub-portafolio
-4. Sin optimización cuadrática — solo operaciones O(N)
+HRP 算法的核心执行步骤：
+1. **聚类树构建与准对角化排序（Quasi-Diagonalization）**：计算相关系数矩阵 → 转换为距离矩阵 → 构建树状图（Linkage Tree） → 重排协方差矩阵使高相关资产在对角线上紧密聚集。
+2. **递归二分切割（Recursive Bisection）**：自顶向下沿着树状图层次结构对资产集合进行递归二叉切分。
+3. **分层逆方差配置**：在每一次二分切分处，根据两个子组合的方差，按逆方差比例分配投资权重：
+   $$w_1 = 1 - \alpha, \quad w_2 = \alpha, \quad \alpha = \frac{V_1}{V_1 + V_2}$$
+4. **计算复杂度极低**：全流程完全无需对协方差矩阵进行求逆操作，亦无需二次规划凸优化器，仅包含 $O(N)$ 级向量运算。
 
-Ventaja: extremadamente robusto, no sufre de inestabilidad de Markowitz.
+**核心优势**：在极端市场暴跌或协方差矩阵奇异时展现出极高的数值稳定性，彻底根除了马科维茨模型由于数值病态造成的权重剧烈跳变。
 
-## HERC — Hierarchical Equal Risk Contribution
+## HERC — 层次化等风险贡献（Hierarchical Equal Risk Contribution）
 
-Similar a HRP pero en cada bisect asigna pesos basados en riesgo igualitario:
+HERC 在设计上与 HRP 类似，但将方差逆比替换为**等风险贡献（Equal Risk Contribution）**准则，使得二分分割的两个子树对总组合风险的边际贡献严格相等：
 
 ```
 alpha = risk_right / (risk_left + risk_right)
 ```
 
-## NCO — Nested Clustered Optimization (De Prado, 2019)
+## NCO — 嵌套聚类优化（Nested Clustered Optimization, Marcos López de Prado, 2019）
 
-Pipeline:
-1. Clusterizar activos en K grupos
-2. **Intra-cluster**: optimizar Markowitz dentro de cada cluster
-3. **Inter-cluster**: optimizar la asignación entre clusters
+NCO 将复杂的大规模资产配置问题解耦为分步嵌套求解：
+1. **资产无监督聚类**：将 $N$ 个资产根据协动性划分为 $K$ 个互不重叠的聚类簇。
+2. **簇内局部优化（Intra-Cluster Optimization）**：在每个聚类簇内部，独立运行马科维茨优化器计算簇内各资产的最优配置比例（大幅缩小了单次优化的矩阵维度）。
+3. **簇间全局优化（Inter-Cluster Optimization）**：将每个聚类簇视为一个合成单一资产，在 $K$ 个聚类簇之间再次运行马科维茨求解宏观配置权重。
 
-Esto reduce la dimensionalidad del problema de optimización y promedia
-ruido dentro de clusters.
+该算法从根本上大幅压缩了协方差矩阵的有效自由度，有效滤除了微观噪点并阻断了簇间误差的交叉蔓延。
 
-### NCO con Restricciones (Pfitzinger & Katzke, 2019)
+### 带约束条件的 NCO（NCO with Constraints, Pfitzinger & Katzke, 2019）
 
-Extensión que permite incluir restricciones de pesos a priori,
-manteniendo la robustez del NCO base:
+Pfitzinger 与 Katzke 对原生 NCO 进行了重要拓展，使其能够在继承聚类优化抗噪优势的同时，原生支持实盘合规硬约束：
 
-- **Por activo**: `TEO >= 5%`, `SQQQ <= 3%`
-- **Por clase**: `Cryptos >= 2%`, `ADR Bancos <= 6%`
-- **Global**: `All assets <= 15%`
+- **单资产级约束**：例如 `TEO >= 5%`, `SQQQ <= 3%`。
+- **行业/板块大类约束**：例如 `Cryptos >= 2%`, `ADR 银行板块 <= 6%`。
+- **全局组合约束**：例如 `任一资产权重上限 <= 15%`。
 
-### Métodos de Asignación Intra-cluster
+### 簇内配置可选方法（Intra-Cluster Allocation Methods）
 
-| Método | Descripción |
+| 方法标识 | 算法逻辑与目标函数 |
 |--------|-------------|
-| CHI-MD | Maximiza diversificación relativa |
-| CHI-ERC | Maximiza Sharpe |
-| HMV | Mínima varianza jerárquica |
-| CMV | Mínima varianza por cluster |
-| HRP | Hierarchical Risk Parity |
-| CEW | Equal Weight por cluster |
+| `CHI-MD` | 最大化簇内相对分散化程度 |
+| `CHI-ERC` | 簇内追求等风险贡献平价 |
+| `HMV` | 层次化最小方差配置 |
+| `CMV` | 簇内基于局部样本的传统最小方差优化 |
+| `HRP` | 簇内嵌套运行层次化风险平价 |
+| `CEW` | 簇内资产按等权重均匀分配 |
 
-### Métricas de Diversificación
+### 投资组合分散化评估指标
 
-| Métrica | Descripción |
+| 评估指标 | 指标定义与金融意义 |
 |---------|-------------|
-| DR | Diversification Ratio |
-| DD | Diversification Delta |
-| RCE | Risk Concentration Equivalent |
-| NBE | Effective Number of Bets |
+| **DR（分散化比率）** | 资产单独波动率的加权和与组合整体总波动率之比（$\sum w_i \sigma_i / \sigma_p$），衡量分散化降低风险的效果 |
+| **DD（分散化增量）** | 组合风险偏离完全分散基准的差值度量 |
+| **RCE（风险集中度等价数）** | 赫芬达尔指数的倒数形式，反映组合风险的集中程度 |
+| **ENB / NBE（有效独立押注次数）** | 组合在统计正交主成分方向上所分配的有效独立下注次数（Effective Number of Bets） |

@@ -1,93 +1,63 @@
-# Simulaciones — Pipeline de Johnson SU + t-Copula
+# 仿真模拟 — Johnson SU + t-Copula 建模流程
 
-## Pipeline
+## 建模全流程（Pipeline）
 
-El pipeline de simulación sigue el material del curso (slides 70-76, TP-Libs
-ej5-ej6-ej9):
+前瞻仿真模拟管道严格遵循课程学术规范（讲义 slides 70-76，TP-Libs 练习 5、6、9）：
 
 ```
-retornos históricos → fit marginal (Johnson SU) → transformar a U(0,1) via CDF
-→ fit t-copula (matriz de correlación P, df) → samplear de t-copula
-→ back-transform via PPF (Johnson SU) → agregar drift → wealth paths
+历史收益率数据 → 拟合各资产边际分布 (Johnson SU) → 通过经验/理论 CDF 映射变换至均匀分布 U(0,1)
+→ 拟合 t-Copula 联合分布 (相关矩阵 P, 自由度 df) → 从多元 t-Copula 联合分布中抽取随机样本
+→ 通过 Johnson SU 分位数逆函数 (PPF) 逆变换为合成收益率 → 叠加预期漂移率 (Drift) → 模拟资产净值路径 (Wealth Paths)
 ```
 
-### Paso a paso
+### 逐步执行逻辑
 
-1. **Fit marginal**: para cada activo, ajustar una distribución Johnson SU a
-   sus retornos históricos. Johnson SU captura asimetría y colas pesadas
-   mejor que cualquier distribución paramétrica estándar.
-2. **Transformación a U(0,1)**: aplicar la CDF de Johnson SU a los retornos.
-   El resultado son valores uniformes [0,1] que preservan la dependencia
-   ordinal entre activos.
-3. **Fit cópula**: sobre los U(0,1), ajustar una t-copula que captura la
-   estructura de dependencia (correlación + dependencia de colas).
-4. **Sampling**: samplear de la t-copula para generar N paths × horizonte.
-5. **Back-transform**: aplicar la PPF (inversa de la CDF) de Johnson SU para
-   convertir los U(0,1) en retornos sintéticos.
-6. **Drift + wealth**: agregar drift diario y calcular wealth acumulado.
+1. **拟合边际分布（Fit marginal）**：针对投资组合中的每个资产，将其历史收益率拟合至 Johnson SU 分布。Johnson SU 分布能够比绝大多数传统参数化分布更精确地刻画金融资产的非对称偏度与厚尾特征。
+2. **映射至均匀分布 $U(0, 1)$**：将 Johnson SU 的累积分布函数（CDF）应用于历史收益率，转换为落在 $[0, 1]$ 区间内的均匀分布变量，同时严格保留资产之间的秩相关（Ordinal dependence）依赖结构。
+3. **拟合 Copula 依赖结构（Fit copula）**：基于变换后的 $U(0, 1)$ 变量，拟合多元 t-Copula 模型，精确捕捉资产间的整体线性相关性与极端尾部协动相关性。
+4. **抽样生成随机路径（Sampling）**：从已标定的 t-Copula 联合分布中抽取大量独立的随机样本（生成 $N$ 条路径 × 模拟时间步长）。
+5. **逆变换回合成收益率（Back-transform）**：利用各资产 Johnson SU 分布的百分位点函数（PPF，即 CDF 的反函数），将 Copula 采样的均匀随机数逆映射为符合真实厚尾特性的合成收益率。
+6. **叠加预期漂移并生成净值（Drift + Wealth paths）**：叠加日频预期漂移率（Drift），并累乘计算每条模拟路径上的投资组合累计净值曲线。
 
-## Distribuciones Marginales
+## 边际概率分布比较
 
-5 distribuciones: Normal, t, NCt, Laplace, Johnson SU.
+内置支持 5 种参数化概率分布：正态分布（Normal）、学生 t 分布（Student-t）、非中心 t 分布（NCt）、拉普拉斯分布（Laplace）以及 Johnson SU 分布。
 
-Johnson SU es empíricamente el mejor fit para retornos de equities. El slide
-71 del curso muestra que Normal subestima consistentemente el VaR, mientras
-que Johnson SU produce error aproximadamente cero.
+实证检验表明，对于股票等权益类资产的收益率分布，Johnson SU 分布的拟合优度显著领先。课程讲义 slide 71 显示，正态高斯假设会系统性低估实际的风险价值（VaR），而 Johnson SU 分布所估算的 VaR 期望误差几乎收敛为零。
 
-**Validación:** test de Kolmogorov-Smirnov sobre cada marginal. Si el p-valor
-del KS es < 0.05, la distribución es rechazada para ese nivel de confianza.
-En SPY, Normal es sistemáticamente rechazada (p < 0.001) mientras que
-Johnson SU no lo es (p > 0.2).
+**统计检验验证：** 对拟合出的每个边际分布执行柯尔莫哥洛夫-斯米尔诺夫检验（Kolmogorov-Smirnov Test, KS-Test）。若 KS 检验的 $p$ 值 $< 0.05$，则在对应置信水平下拒绝该分布假设。在标普 500 指数（SPY）的实际数据拟合中，高斯正态分布被断然拒绝（$p < 0.001$），而 Johnson SU 分布则完全无法被拒绝（$p > 0.2$），证实其高度贴合现实。
 
-## Familias de Cópulas
+## Copula 函数族对比
 
-| Cópula | Simetría | Dependencia de Colas | Caso de Uso |
+| Copula 类型 | 对称性 | 尾部依赖特征 | 核心量化应用场景 |
 |--------|----------|----------------------|-------------|
-| t | Simétrica | Inferior + superior | Clusters de equities, correlación en crisis |
-| Gaussiana | Simétrica | Ninguna | Baseline, aproximación de bajo rango |
-| Clayton | Asimétrica | Inferior | Clustering de drawdowns |
-| Gumbel | Asimétrica | Superior | Clustering de rallies |
-| Frank | Simétrica | Ninguna | Correlación de bonos / FX |
+| **t-Copula** | 对称 | 兼具下尾与上尾极端依赖 | 股票资产组合、市场危机暴跌共振建模 |
+| **高斯 Copula（Gaussian）** | 对称 | 无渐近尾部依赖 | 基准参照模型、低维弱相关资产的快速近似 |
+| **Clayton Copula** | 非对称 | 仅存在强烈的**下尾依赖**（极端下跌时高度同步） | 回撤聚集建模、系统性风险扩散测试 |
+| **Gumbel Copula** | 非对称 | 仅存在强烈的**上尾依赖**（极端暴涨时高度同步） | 加密货币大牛市狂欢、暴涨逼空行情建模 |
+| **Frank Copula** | 对称 | 无渐近尾部依赖 | 纯债与外汇对冲、相关性微弱的大宗商品建模 |
 
-### Cuándo usar cada una
+### 选型决策指南
 
-- **t-Copula**: la opción por defecto para portfolios de equities. Captura
-  el hecho de que en las crisis todas las correlaciones tienden a 1.
-- **Gaussiana**: útil como baseline o cuando los datos son aproximadamente
-  normales multivariados (bonos investment grade, FX majors).
-- **Clayton**: captura asimetría donde las caídas son más correlacionadas que
-  las subidas (mercados emergentes, high yield).
-- **Gumbel**: captura asimetría donde las subidas son más correlacionadas
-  (rallies de crypto, squeezes).
-- **Frank**: útil para activos con correlación débil y sin estructura de colas
-  (commodities vs equities).
+- **t-Copula**：股票多头投资组合建模的**首选默认模型**。能够精准刻画“牛市中各股票各自涨跌、而在股灾崩盘时全市场相关性急速趋近于 1”的危机传染特征。
+- **高斯 Copula**：适用于资产收益率严格服从多元正态分布的前提（如投资级债券、主流外汇货币对）或作为基准对照组。
+- **Clayton Copula**：专门用于建模“跌时高度相关、涨时各自独立”的非对称崩盘脆弱性（新兴市场股市、高收益垃圾债）。
+- **Gumbel Copula**：专门用于建模“极端共振暴涨、下跌较为分散”的行情特征（牛市初期的迷因币与加密资产协同上冲）。
+- **Frank Copula**：适用于收益率之间相关性较弱且在极端尾部无紧密耦合关系的宏观大类资产配置（如大宗商品 vs 科技股）。
 
-## Validación de la Cópula
+## Copula 模型严谨性验证
 
-Comparar la matriz de correlación simulada vs la real mediante error absoluto
-medio. También comparar con diferentes valores de df (como en ej6) para
-encontrar el óptimo. Un df bajo (2-4) indica fuerte dependencia de colas; un
-df alto (> 10) se aproxima a la cópula gaussiana.
+通过计算合成模拟的相关矩阵与真实历史样本相关矩阵之间的平均绝对误差（MAE）进行校验。同时，针对学生 t-Copula 模型遍历不同的自由度参数 $df$ 进行参数调优以确定最优值。自由度 $df$ 越低（如 $df \in [2, 4]$），代表资产间的极端厚尾联动性越剧烈；自由度较高（$df > 10$）时，t-Copula 将逐渐退化并逼近标准高斯 Copula。
 
-## Escenarios Multi-CAGR
+## 多情景 CAGR 压力测试（Multi-CAGR Scenarios）
 
-Correr la misma simulación a múltiples niveles de drift
-(−30%, −15%, 0%, +20%, +35%, +50%) para stress-testear un portfolio bajo
-diferentes regímenes macro. Esto permite responder preguntas como:
-"¿qué probabilidad hay de perder 30% en 1 año si el CAGR real es 0%?"
-vs "¿y si el CAGR real es 15%?"
+在多个不同宏观预期漂移率水平下（如年化复合增长率 $-30\%$, $-15\%$, $0\%$, $+20\%$, $+35\%$, $+50\%$）重复运行该仿真模拟，以测试投资组合在不同宏观经济周期下的承压能力。从而量化解答关键问题，例如：
+“若未来一年宏观大盘的真实 CAGR 仅为 0%，投资组合发生 30% 以上亏损的概率是多少？” 对比 “若真实 CAGR 达到 15%，这一亏损概率又会降低至多少？”
 
-## Interpretación de Resultados
+## 仿真模拟输出指标深度解读
 
-- **Fan chart**: percentiles 5/25/50/75/95 del wealth acumulado. El ancho del
-  abanico mide la incertidumbre — crece con el horizonte.
-- **Forward VaR 95%**: peor retorno esperado en el percentil 5. Si es -20%,
-  hay 5% de probabilidad de perder 20% o más.
-- **Expected Shortfall (cVaR)**: pérdida promedio en el peor 5%. Siempre es
-  peor que el VaR. La diferencia entre VaR y cVaR mide la severidad de las
-  colas.
-- **MaxDD forward**: máximo drawdown esperado en cada path. El percentil 95
-  del MaxDD es una medida conservadora del riesgo de drawdown.
-- **Probabilidad de ruina**: fracción de paths que terminan por debajo de un
-  umbral (ej: 50% del capital inicial). Debe ser cercana a 0 para estrategias
-  viables.
+- **扇形概率图（Fan Chart）**：绘制未来累计财富净值的第 5%、25%、50%（中位数）、75% 与 95% 分位数曲线。扇面的上下张角直观展现了不确定性的随时间扩散幅度。
+- **前瞻 95% VaR（Forward VaR 95%）**：第 5 分位数对应的预期最差收益率。若数值为 $-20\%$，意味着未来有一年内承受 $20\%$ 或更大亏损的概率为 $5\%$。
+- **条件风险价值 / 期望亏损（cVaR / Expected Shortfall）**：在最差 $5\%$ 的极端尾部亏损情形下的平均损失幅度。其绝对值始终大于 VaR。VaR 与 cVaR 之间的偏离差值直接揭示了尾部极端黑天鹅的破坏烈度。
+- **前瞻最大回撤（Forward MaxDD）**：统计在每条合成净值路径上所经历的最大历史回撤幅度。其中第 95 分位数最大回撤可作为极度保守的风险准备金拨备依据。
+- **破产毁灭概率（Probability of Ruin）**：模拟路径中最终资产净值跌穿设定清算红线（例如触及初始本金的 $50\%$）的路径比例。对于任何稳健可执行的量化交易策略，该破产概率必须无限逼近于 0。

@@ -1,595 +1,331 @@
-# Theory — Por que cada metodo, cuando usar, cuando NO
+# Theory — 定价模型选型逻辑：为何用、何时用、何时切勿使用
 
-Para la guia practica de uso, ver `SKILL.md`. La teoria matematica
-detallada de cada modelo esta en `REFERENCE.md`. Este documento se enfoca
-exclusivamente en **cuando** y **por que** usar cada uno, con tablas
-comparativas.
+关于 CLI 命令行实操请参阅 [`SKILL.md`](../SKILL.md)，各模型的底层数学推导详见 [`REFERENCE.md`](./REFERENCE.md)。本文档专门剖析各模型的**选型决策树**、**适用与禁用边界**、**性能/精度权衡**以及量化实践中的**常见避坑指南**。
 
 ---
 
-## Indice
+## 目录
 
-1. [Criterios de decision rapida](#1-criterios-de-decision-rapida)
-2. [Tabla maestra: precision, velocidad, supuestos](#2-tabla-maestra)
-3. [Por que de cada metodo](#3-por-que-de-cada-metodo)
+1. [快速决策流程图](#1-快速决策流程图)
+2. [全局主表：精度、速度、核心假设](#2-全局主表精度速度核心假设)
+3. [各定价方法深度剖析](#3-各定价方法深度剖析)
    - [3.1 Black-Scholes](#31-black-scholes)
    - [3.2 Bjerksund-Stensland 2002 / BAW](#32-bjerksund-stensland-2002--baw)
-   - [3.3 Binomial CRR](#33-binomial-crr)
-   - [3.4 Trinomial Boyle](#34-trinomial-boyle)
-   - [3.5 Monte Carlo antithetic](#35-monte-carlo-antithetic)
-   - [3.6 Longstaff-Schwartz](#36-longstaff-schwartz)
+   - [3.3 Binomial CRR (二叉树)](#33-binomial-crr-二叉树)
+   - [3.4 Trinomial Boyle (三叉树)](#34-trinomial-boyle-三叉树)
+   - [3.5 Monte Carlo 对偶变量模拟](#35-monte-carlo-对偶变量模拟)
+   - [3.6 Longstaff-Schwartz (LSM)](#36-longstaff-schwartz-lsm)
    - [3.7 Heston 1993](#37-heston-1993)
    - [3.8 Bates 1996](#38-bates-1996)
-4. [Tablas comparativas por caso de uso](#4-tablas-comparativas-por-caso-de-uso)
-5. [Anti-patrones y trampas comunes](#5-anti-patrones-y-trampas-comunes)
-6. [Cuando NO usar este skill](#6-cuando-no-usar-este-skill)
+4. [业务场景横向对比表](#4-业务场景横向对比表)
+5. [典型反模式与量化避坑指南](#5-典型反模式与量化避坑指南)
+6. [何时切勿使用本工具库](#6-何时切勿使用本工具库)
+7. [执行总结](#7-执行总结)
 
 ---
 
-## 1. Criterios de decision rapida
+## 1. 快速决策流程图
 
 ```
-                 +-- Europea? -- Si --> Sonrisa/skew? -- Si --> Heston
-                 |                                   \-- No --> BS
-  Opcion que     |
-  quiero         +-- Americana? -- Sin dividendos? -- Si --> BS2
-  pricear ------ |                                \-- No --> BS2 o Binomial
+                 +-- 欧式期权? -- 是 --> 需刻画波动率微笑/偏斜(Skew)? -- 是 --> Heston
+                 |                                                    \-- 否 --> Black-Scholes
+  待定价的目标期权 |
+                 +-- 美式期权? -- 常规股息/无分红? -- 是 --> BS2 (BAW)
+                 |                                \-- 否 --> BS2 或 二叉树 (Binomial)
                  |
-                 +-- Smile + tail risk? -- Si --> Bates
+                 +-- 兼具波动率微笑与极端崩盘尾部风险? -- 是 --> Bates
                  |
-                 +-- Payoff custom? -- Si --> MC o LSM
+                 +-- 自定义复杂收益结构 (Custom Payoff)? -- 是 --> MC 或 LSM
                  |
-                 +-- Validacion? -- Si --> Binomial N=2000
+                 +-- 基准验证 / 交叉核验? -- 是 --> 二叉树 (Binomial N=2000)
 ```
 
-**Reglas rapidas:**
+**快速选型准则表：**
 
-| Situacion | Metodo | Por que |
-|-----------|--------|---------|
-| Backtest masivo de europeas | `bs` | 419k ops/sec, 0 error |
-| Backtest masivo de americanas | `bs2` | 276k ops/sec, ~0.5% error |
-| Backtest con sonrisa del mercado | `heston` | 2.5k ops/sec, captura skew |
-| Backtest con crash risk real | `bates` | 160 ops/sec, captura colas pesadas |
-| Validar otro modelo (sanity check) | `binomial --steps 2000` | Gold standard, 0.1% error |
-| Opcion path-dependent (asian, barrier) | `mc` con payoff custom | Framework extensible |
-| Necesito prob de ejercicio temprano | `lsm` con paths=50k | Unica opcion via simulacion |
-
----
-
-## 2. Tabla maestra: precision, velocidad, supuestos
-
-Inputs del benchmark: `S=K=100, T=0.25, r=0.05, sigma=0.20, q=0`.
-Medido en Python 3.14 + numpy 2.4.4, Windows 11. **No asumido: medido con
-`time.perf_counter()` sobre las funciones reales del skill.**
-
-| Metodo | Funcion | Time complexity | us/op | ops/sec | Supuestos clave | Error tipico |
-|--------|---------|-----------------|------:|--------:|-----------------|--------------|
-| Black-Scholes | `bs_price` | O(1) | 2.4 | 419k | GBM, vol cte, sin sonrisa | 0 (closed) |
-| BS2/BAW | `bs2_american_price` | O(1) | 3.6 | 276k | BS + smooth-pasting, sin sonrisa | <1% vs binomial |
-| Binomial CRR N=500 | `binomial_price` | O(N^2) | 5612 | 178 | Discretizacion del GBM | ~0.5% |
-| Binomial CRR N=2000 | `binomial_price` | O(N^2) | 31004 | 32 | Idem, mas preciso | ~0.1% |
-| Trinomial N=500 | `trinomial_price` | O(N^2) | 9364 | 107 | 3 nodos por paso | ~0.3% |
-| MC paths=10k | `mc_european_price` | O(paths) | 1270 | 788 | Sampleo iid + antithetic | ~1% (stderr) |
-| MC paths=100k | `mc_european_price` | O(paths) | 5636 | 177 | Idem, mas preciso | ~0.1% (stderr) |
-| LSM paths=10k | `lsm_price` | O(paths * steps) | ~150k | ~7 | Regresion polinomial | ~1-2% |
-| Heston | `heston_price` | O(N_GL) ~ O(1) | 398 | 2.5k | Vol estocastica (CIR), sonrisa via rho | <0.1% vs QuantLib |
-| Bates | `bates_price` | O(15) = 6 ms | 6241 | 160 | Heston + Merton jumps | <0.5% |
-| Greeks (BS) | `bs_greeks` | O(1) | 3.9 | 257k | Formulas cerradas | 0 (closed) |
-| P(ITM) | `prob_itm` | O(1) | 1.1 | 908k | N(d2) bajo Q | 0 (closed) |
-| IV solve | `implied_vol` | O(log(1/eps)) | 82 | 12k | Bisection sobre BS o binomial | 1e-7 |
+| 业务场景 | 推荐方法 | 选用核心理由 |
+|---------|---------|-------------|
+| **大规模欧式期权量化回测** | `bs` | 41.9 万次/秒极速吞吐，0 数值误差 |
+| **大规模美式期权量化回测** | `bs2` | 27.6 万次/秒吞吐，相比二叉树误差仅约 0.5% |
+| **考虑市场真实波动率微笑的回测** | `heston` | 2,500 次/秒，O(1) 傅里叶积分捕获负偏斜（Skew） |
+| **包含真实崩盘暴跌风险的尾部测试** | `bates` | 160 次/秒，捕获肥尾与跳跃风险溢价 |
+| **核验其他模型的数值基准 (Ground Truth)** | `binomial --steps 2000` | 金融工程公认基准，误差仅 0.1% |
+| **路径依赖型期权 (亚式、障碍等)** | `mc` 自定义收益 | 框架可扩展，支持任意复杂路径采样 |
+| **获取美式期权提前行权时间分布** | `lsm` 设置 paths=50k | 唯一支持路径模拟最优停时的算法 |
 
 ---
 
-## 3. Por que de cada metodo
+## 2. 全局主表：精度、速度、核心假设
+
+**基准测试基准输入**：`S=K=100, T=0.25, r=0.05, sigma=0.20, q=0`。在 Windows 11、Python 3.14 + numpy 2.4.4 环境下，使用 `time.perf_counter()` 对库内函数执行实测：
+
+| 定价方法 | 核心函数 | 时间复杂度 | 单次微秒 (us) | 吞吐量 (ops/sec) | 核心假设 | 典型误差 |
+|---------|---------|-----------|--------------:|----------------:|---------|----------|
+| **Black-Scholes** | `bs_price` | O(1) | 2.4 | 419k | 几何布朗运动、常数波动率、无微笑 | 0（严格闭式解） |
+| **BS2/BAW** | `bs2_american_price` | O(1) | 3.6 | 276k | BS + 光滑贴合条件、无微笑 | <1%（相对二叉树） |
+| **Binomial CRR N=500** | `binomial_price` | O(N^2) | 5,612 | 178 | GBM 离散化网格 | ~0.5% |
+| **Binomial CRR N=2000** | `binomial_price` | O(N^2) | 31,004 | 32 | GBM 离散化高精网格 | ~0.1% |
+| **Trinomial N=500** | `trinomial_price` | O(N^2) | 9,364 | 107 | 每步 3 节点，数值条件更优 | ~0.3% |
+| **MC paths=10k** | `mc_european_price` | O(paths) | 1,270 | 788 | 独立同分布抽样 + 对偶变量 | ~1%（标准误） |
+| **MC paths=100k** | `mc_european_price` | O(paths) | 5,636 | 177 | 高密度抽样 + 对偶变量 | ~0.1%（标准误） |
+| **LSM paths=10k** | `lsm_price` | O(paths * steps) | ~150,000 | ~7 | 多项式最小二乘回归 | ~1-2% |
+| **Heston** | `heston_price` | O(N_GL) ~ O(1) | 398 | 2.5k | CIR 随机方差过程，通过相关性引入偏斜 | <0.1%（相对 QuantLib） |
+| **Bates** | `bates_price` | O(15) ~ 6 ms | 6,241 | 160 | Heston 随机方差 + Merton 泊松跳跃 | <0.5% |
+| **Greeks (BS)** | `bs_greeks` | O(1) | 3.9 | 257k | 解析微分公式 | 0（闭式求导） |
+| **P(ITM)** | `prob_itm` | O(1) | 1.1 | 908k | 风险中性测度 Q 下的 N(d2) | 0（严格闭式解） |
+| **IV 反解** | `implied_vol` | O(log(1/eps)) | 82 | 12k | 基于 BS 或二叉树的二分迭代 | $10^{-7}$ 容差 |
+
+---
+
+## 3. 各定价方法深度剖析
 
 ### 3.1 Black-Scholes
 
-**Por que existe**: Es el **standard de la industria** para europeas. Closed-form,
-exacta bajo sus supuestos. Es la base sobre la cual se construye todo lo demas.
+**为何存在**：现代金融衍生品定价的标准基石。在标准假设下具备解析闭式解，是量化金融领域的通用语言。
 
-**Por que usarlo**:
-- **Performance imbatible**: 419k opciones/seg en Python puro. 100x mas rapido
-  que cualquier alternativa no-closed-form.
-- **Simplicidad**: solo 5 inputs (S, K, T, r, sigma). Trivial de implementar
-  y verificar.
-- **Greeks closed-form**: delta, gamma, vega, theta, rho todos disponibles
-  via formulas analiticas. Imbatible para hedging.
-- **Calibracion trivial**: solo hay un parametro libre (sigma) por opcion.
+**为何选用**：
+- **无可匹敌的吞吐性能**：纯 Python 达到 41.9 万次/秒，比任何数值模拟方法快 100 倍以上。
+- **参数极度精炼**：仅需 5 个输入（$S, K, T, r, \sigma$），易于管理与自动化测试。
+- **全套解析希腊值**：Delta、Gamma、Vega、Theta、Rho 均有显式公式，是 Delta 动态对冲的不二之选。
+- **校准简单**：每个期权仅对应唯一的自由参数 $\sigma$。
 
-**Por que NO usarlo**:
-- **Asume volatilidad constante**: la sonrisa de vol del mercado real
-  (skew, term structure) NO existe en BS. Backtestear con BS + IV fija da
-  errores sistematicos en wings.
-- **Asume distribucion lognormal**: retornos reales tienen **skew negativo**
-  y **kurtosis > 3** (fat tails). BS subestima el riesgo de crash.
-- **Solo europeas**: no funciona para opciones americanas (early exercise).
+**为何禁用 / 局限性**：
+- **常数波动率假设与现实脱节**：市场上真实存在的波动率微笑（Smile）、波动率偏斜（Skew）以及期限结构（Term Structure）在 BS 中完全缺失。若在远离平值的深度虚值/实值期权中固守常数 IV，会导致系统性定价偏差。
+- **对数正态分布忽略厚尾风险**：现实资产收益具有**负偏度**与**尖峰厚尾**特征，BS 模型会严重低估极端黑天鹅崩盘风险。
+- **仅限欧式期权**：无法处理包含提前行权权益的美式期权。
 
-**Cuando es la eleccion correcta**:
-- Backtest de **masas** de opciones vanilla europeas
-- Greeks analiticos para **delta-hedging**
-- Cuando la **velocidad** importa mas que la precision en wings
-- Como **baseline** para comparar contra modelos mas complejos
-
-**Tabla de decision**:
-
-| Si tenes... | Usa... |
-|-------------|--------|
-| 1M opciones, T<1y, ATM | BS (no hay nada mas rapido) |
-| Opcion con strike > 1.5x o < 0.7x ATM | NO BS (sonrisa importa) |
-| Portfolio con tail risk real | NO BS (subestima crashes) |
+**决策参考**：
+- 百万级海量平值附近欧式期权回测 $\rightarrow$ **必须选用 BS**。
+- 执行价远离平值（如 $K > 1.5S$ 或 $K < 0.7S$） $\rightarrow$ **切勿单用 BS**，需结合 Heston。
+- 策略涉及黑天鹅尾部对冲 $\rightarrow$ **切勿单用 BS**，需结合 Bates。
 
 ---
 
 ### 3.2 Bjerksund-Stensland 2002 / BAW
 
-**Por que existe**: BS asume ejercicio solo en T. Para americanas (ejercicio
-en cualquier t) necesitamos otra cosa. BAW/BS1993 es la version **rapida
-y closed-form** para americanas.
+**为何存在**：标准 BS 无法评估美式期权的提前行权溢价。BAW（Barone-Adesi & Whaley）通过二次逼近方程近似临界行权边界 $S^*$，是美式期权领域最成熟的闭式解析近似解。
 
-**Por que usarlo**:
-- **O(1) closed-form**: 276k ops/sec, comparable a BS. 1000x mas rapido
-  que el binomial.
-- **Buena precision**: ~0.5% vs binomial N=2000. Suficiente para backtest.
-- **Robusto**: no necesita libs externas, no tiene ramas fragiles.
-- **Funciona para call y put** (con swap put-call para el caso put).
+**为何选用**：
+- **O(1) 解析级速度**：达到 27.6 万次/秒，速度与 BS 处于同一数量级，比二叉树快 1000 倍以上。
+- **优异的工业精度**：对比二叉树 $N=2000$ 步，误差普遍在 0.5% 以内，完全满足回测需要。
+- **无外部依赖**：仅需单变量牛顿迭代求解边界，高度鲁棒。
 
-**Por que NO usarlo**:
-- **Mismo problema de sonrisa que BS**: asume vol constante. Para
-  backtesting serio, combinar BS2 con Heston o Bates.
-- **Limite en q >= r**: cuando dividend yield > risk-free, BAW no converge
-  y se cae a binomial (mas lento). La implementacion tiene este fallback.
-- **Limite en put con q=0**: la simetria put-call degenera. Fallback a
-  binomial.
-- **~0.5% error** vs 0% de BS: para algunas estrategias la diferencia importa.
+**为何禁用 / 局限性**：
+- **继承了 BS 的常数波动率缺陷**：不含波动率微笑机制。
+- **红利率极端场景发散**：当连续分红率高于无风险利率（$q \ge r$）时，美式看涨期权提前行权临界点发散，算法需自动回退至二叉树。
 
-**Cuando es la eleccion correcta**:
-- Backtest masivo de **opciones americanas**
-- Cuando necesitas O(1) por opcion para iterar rapido
-- Como **primera aproximacion** antes de refinar con binomial
-
-**Tabla de decision**:
-
-| Si tenes... | Usa... |
-|-------------|--------|
-| Americana, ATM, |q-r| < 5% | BS2 (rapido, preciso) |
-| Americana, ATM, |q-r| > 5% | Binomial (BS2 fallback) |
-| Americana, deep ITM/OTM | Binomial N=2000 (mas preciso) |
+**决策参考**：
+- 大规模美式期权回测 $\rightarrow$ **首选 BS2**。
+- 美式期权高精无套利判定 $\rightarrow$ **选用二叉树 N=2000**。
 
 ---
 
-### 3.3 Binomial CRR
+### 3.3 Binomial CRR (二叉树)
 
-**Por que existe**: **El gold standard** de validacion. Converge a la solucion
-exacta de la EDP de Black-Scholes cuando N -> inf. Para N=2000-10000,
-el error es <0.05%.
+**为何存在**：金融工程领域的公认验证基准。当离散步数 $N \to \infty$ 时，其数值解严格收敛于 Black-Scholes PDE 的精确真解。
 
-**Por que usarlo**:
-- **Convergencia probada**: a diferencia de BAW o Heston (que son
-  aproximaciones), binomial converge a la solucion verdadera.
-- **Americanas + Europeas**: el mismo algoritmo funciona para ambas.
-- **Simple de entender**: la intuicion del arbol up/down es muy clara.
-- **Vectorizable**: el backward induction es O(N^2) con numpy. Para N=500,
-  5.6 ms/op.
+**为何选用**：
+- **收敛性具备坚实数学证明**：作为离散马尔可夫链模型，其收敛轨迹可靠。
+- **天然支持欧式与美式期权**：通过在反向归纳递推中引入 $\max(V, \text{Intrinsic})$，完美适配美式行权决策。
+- **便于计算离散希腊值**：可直接在树状网格节点提取有限差分 Delta 与 Gamma。
 
-**Por que NO usarlo**:
-- **Lento**: 5.6 ms/op (vs 3.6 us para BS2). ~1500x mas lento.
-- **No captura sonrisa**: mismo problema que BS. Asume lognormal.
-- **Oscilacion de precios**: a veces converge erraticamente. Hay que
-  promediar N=500 y N=1000 (Richardson extrapolation) para resultados
-  confiables.
+**为何禁用 / 局限性**：
+- **运算速度慢**：$N=500$ 时单次耗时约 5.6 ms，吞吐量仅 178 次/秒，约为 BS2 的 1/1500。
+- **同样假定几何布朗运动**：无法自动产生波动率偏斜与微笑。
+- **锯齿状交替震荡**：行权价落在不同网格区间时会导致定价随 $N$ 的增长出现轻微上下震荡。
 
-**Cuando es la eleccion correcta**:
-- **Validacion** de otros modelos (siempre comparar contra binomial N=2000)
-- Americana con parametros extremos (donde BAW no aplica)
-- Calculo de greeks por diferencias finitas (delta, gamma, vega)
-- Cuando la **precision** importa mas que la velocidad
-
-**Tabla de decision**:
-
-| Si necesitas... | Usa... |
-|-----------------|--------|
-| Validar otro pricer | Binomial N=2000 |
-| Opcion americana con q >= r | Binomial N=1000 |
-| Greeks por diferencias finitas | Binomial N=200+ |
-| Backtest masivo (>10k opciones) | NO binomial (usar BS2) |
+**决策参考**：
+- 校验自研新算法或核验第三方报价 $\rightarrow$ **选用 Binomial N=2000**。
+- 大规模密集回测 $\rightarrow$ **严禁在循环内直接运行高步数二叉树**。
 
 ---
 
-### 3.4 Trinomial Boyle
+### 3.4 Trinomial Boyle (三叉树)
 
-**Por que existe**: Variante del binomial con **3 nodos por paso** (up, middle,
-down). Mejor condicionamiento numerico que CRR.
+**为何存在**：通过在二叉树基础上引入中间水平节点（$m=1$），为布朗运动的均值和方差匹配提供了额外的自由度，具备更好的数值稳定条件。
 
-**Por que usarlo**:
-- **Convergencia mas monotona**: vs CRR que oscila. ~30% menos pasos para
-  misma precision.
-- **Mejor para T largos y sigma altos**: donde CRR diverge erraticamente.
-- **Sirve para validar binomial**: si los dos coinciden, tenes confianza.
+**为何选用**：
+- **收敛单调性更佳**：大幅减轻了二叉树的交替震荡，收敛曲线更加平滑。
+- **长期限与超高波动率更稳健**：在 $T > 2$ 年或 $\sigma > 100\%$ 时不易发生概率越界失真。
 
-**Por que NO usarlo**:
-- **~1.7x mas lento** que binomial para mismo N. Si binomial ya es lento,
-  trinomial es peor.
-- **No captura sonrisa**.
-- **Complejidad adicional** sin beneficio dramatico para backtest tipico.
-
-**Cuando es la eleccion correcta**:
-- Cuando binomial da resultados erraticos (validacion cruzada)
-- Opciones de largo plazo (T > 2 anos)
-- Volatilidades altas (sigma > 100%)
-
-**En general**: usa binomial primero. Trinomial solo si binomial falla.
+**为何禁用 / 局限性**：
+- 单步计算量为二叉树的 3 倍，相同 $N$ 下耗时比二叉树慢约 1.7 倍。若二叉树表现正常，三叉树无显著额外收益。
 
 ---
 
-### 3.5 Monte Carlo antithetic
+### 3.5 Monte Carlo 对偶变量模拟
 
-**Por que existe**: Cuando el payoff **no es closed-form** (asian, lookback,
-barrier, multi-asset basket) y no se puede escribir como una funcion de S_T,
-se necesita simulacion.
+**为何存在**：针对非标准衍生品（如带有均价观测的亚式期权、障碍触发期权或复合衍生品），无法写出闭式积分或构建低维网格，蒙特卡洛模拟是通用终极手段。
 
-**Por que usarlo**:
-- **Framework extensible**: payoff custom = solo cambiar la funcion
-  de pago. El resto del codigo es igual.
-- **Antithetic variates**: reduce varianza 50-70% (factor 2-3x en
-  samples efectivos).
-- **Convergencia O(1/sqrt(N))**: aceptable para aplicaciones no-time-critical.
+**为何选用**：
+- **极高的框架扩展性**：只需替换终末收益函数 `payoff(S_T)`，底层采样与贴现引擎完全通用。
+- **内置对偶变量法方差缩减**：方差降低 50-70%，在相同抽样条数下显著压降标准误。
 
-**Por que NO usarlo**:
-- **Lento para vanilla**: 1.3 ms (paths=10k) vs 2.4 us para BS. 540x mas
-  lento para **menos** precision.
-- **No captura sonrisa** (mismo drift risk-neutral que BS).
-- **Ruido estocastico**: cada corrida da un resultado distinto. Para
-  resultados reproducibles, fijar `--seed`.
-
-**Cuando es la eleccion correcta**:
-- **Opciones exoticas** (asian, barrier, lookback) que el skill no implementa
-  pero el framework soporta
-- **Multi-asset** (basket, spread, rainbow) que requieren paths correlacionados
-- **Validacion** de otros modelos (como sanity check)
-- **Stress testing** con payoffs custom
-
-**Tabla de decision**:
-
-| Si necesitas... | Usa... |
-|-----------------|--------|
-| Vanilla europea, ATM | NO MC (usar BS) |
-| Vanilla europea, deep OTM | MC con paths=10k (BS es exacto pero tarda similar) |
-| Opcion con payoff custom | MC (es el unico que aplica) |
-| Validacion rapida | MC con seed fija, paths=100k |
+**为何禁用 / 局限性**：
+- **香草期权定价严重过剩**：对普通欧式期权，耗时比 BS 慢数百倍，且带有统计抽样噪声。
+- **无法直接定价美式期权**：标准 MC 仅记录到期终值，不记录最优停时决策。
 
 ---
 
-### 3.6 Longstaff-Schwartz
+### 3.6 Longstaff-Schwartz (LSM)
 
-**Por que existe**: LSM extiende MC a **opciones americanas** usando
-regresion least-squares para estimar el valor de continuacion. Es el
-metodo de simulacion standard para americanas.
+**为何存在**：利用最小二乘正交回归预测反向归纳中的未行权持有价值，开创了通过模拟求解美式期权最优停时的通用方法。
 
-**Por que usarlo**:
-- **Unico MC para americanas**: cuando BS2 no aplica (payoff custom,
-  multi-asset).
-- **Lower bound del precio verdadero**: LSM da un subestimador. Si tenes
-  upper bound (dual LSM), acotas el precio real.
-- **Funciona con payoffs custom**: igual que MC, pero con decision de
-  ejercicio en cada nodo.
+**为何选用**：
+- **支持复杂非线性美式衍生品**：当期权兼具美式提前行权与复杂 Payoff（如美式多资产篮子期权）时，LSM 是极少数可行算法之一。
+- **提供严格的理论下界**：由于回归拟合次优于绝对完美策略，计算出的价格天然构成真实美式期权价格的严谨下界。
 
-**Por que NO usarlo**:
-- **Lentisimo**: 150 ms/op. **41,000x mas lento** que BS2.
-- **Necesita muchos paths** para converger (paths=10k da error ~2-3%).
-- **Lower bound only**: sin dual LSM no tenes upper bound.
-- **Para vanilla americana**: BS2 es 1000x mas rapido y suficiente.
-
-**Cuando es la eleccion correcta**:
-- **Americana con payoff custom** (donde BS2 no aplica)
-- **Multi-asset basket americano** (donde BAW no aplica)
-- **Calibracion** de un modelo de vol donde la put americana es referencia
-
-**Tabla de decision**:
-
-| Si tenes... | Usa... |
-|-------------|--------|
-| Americana vanilla | BS2 (1000x mas rapido) |
-| Americana con payoff custom | LSM (unica opcion) |
-| Multi-asset basket americano | LSM (extender framework) |
-| Backtest masivo americano | BS2 + ajustar bias si es necesario |
+**为何禁用 / 局限性**：
+- **计算极其沉重**：单次定价耗时达 150 毫秒，吞吐量仅个位数/秒。
+- 对普通美式期权而言，BS2 解析解比 LSM 快 4 万倍以上，绝不应在常规场景滥用 LSM。
 
 ---
 
 ### 3.7 Heston 1993
 
-**Por que existe**: BS asume **volatilidad constante**. La realidad es que
-la vol tiene:
-- **Skew** (asimetría): puts mas caros que calls (mercado paga por
-  proteccion contra caidas)
-- **Term structure**: vol distinta para cada expiry
-- **Smile**: la sonrisa alrededor del ATM
+**为何存在**：市场期权价格隐含的真实波动率并非恒定常数，而是呈现显著的**波动率偏斜（Skew）**与**期限结构**。Heston 模型将方差建模为均值回归的 CIR 扩散过程：
 
-Heston captura **skew** y parte de la **term structure** modelando la vol
-como un proceso estocastico (CIR).
+$$dS_t = (r - q) S_t dt + \sqrt{v_t} S_t dW_t^S$$
+$$dv_t = \kappa (\theta - v_t) dt + \sigma_v \sqrt{v_t} dW_t^v$$
+$$\text{Cov}(dW_t^S, dW_t^v) = \rho dt$$
 
-**Por que usarlo**:
-- **Captura sonrisa real**: el parametro `rho` (correlacion spot-vol)
-  produce skew negativo (tipico -0.5 a -0.8 en equity). Es el efecto
-  cuantitativamente mas importante que BS pierde.
-- **O(1) closed-form** via Fourier integral (~400 us, comparable a BS).
-- **Calibrable**: los 5 parametros (v0, kappa, theta, sigma_v, rho) se
-  pueden fitear a una superficie de vol real.
-- **Vol mean-reversion**: el parametro `kappa` (tipico 0.5-3) hace que la
-  vol tienda a `theta` (vol de largo plazo). Captura term structure.
+**为何选用**：
+- **原生刻画负偏斜（Skew）**：股票市场中参数 $\rho$ 通常在 $-0.5$ 至 $-0.8$ 之间，完美解释了虚值 Put 溢价偏高的市场现实。
+- **具备傅里叶反演解析解**：通过特征函数积分，时间复杂度仍为 O(1) 闭式范畴（~400 us），兼顾真实度与回测速度。
+- **刻画波动率均值回归**：$\kappa$ 驱动方差向长期水平 $\theta$ 靠拢，契合宏观金融实证。
 
-**Por que NO usarlo**:
-- **Lento vs BS**: 400 us vs 2.4 us. **~165x mas lento** que BS.
-- **No captura colas pesadas**: el proceso CIR es gaussiano-impulsado,
-  no permite jumps. Subestima riesgo de crash.
-- **Calibracion dificil**: 5 parametros en 5D optimization. Hay minimos
-  locales. Requiere regularizacion.
-- **Spread smile**: Heston tiene dificultad para fitear sonrisas muy
-  empinadas (las opciones deep OTM). Para eso: local vol (Dupire) o
-  Bates.
+**为何禁用 / 局限性**：
+- 耗时约 400 us，比极速 BS 慢约 165 倍。
+- 不含跳跃过程，对于短期极度剧烈的断崖式跳空暴跌仍有低估。
+- 5 维非线性参数校准较为复杂。
 
-**Cuando es la eleccion correcta**:
-- **Backtest con sonrisa** del mercado (necesitas skew para que las
-  opciones deep OTM/ITM tengan sentido)
-- **Calibracion** de un modelo de vol
-- **Pricing de opciones vanilla** cuando tenes la superficie de vol
-- **Comparacion contra BS**: para ver cuanto te perdés por ignorar skew
-
-**Tabla de decision**:
-
-| Si tenes... | Usa... |
-|-------------|--------|
-| Opcion ATM europea | BS (10x mas rapido) |
-| Opcion OTM/ITM europea | Heston (captura skew) |
-| Vol surface real (data) | Heston (calibrar y pricer) |
-| Cola izquierda importante (crash risk) | Bates (no Heston) |
-| Opciones con smile muy pronunciado | Local vol o Bates |
-
-**Parametros tipicos para equity US** (SPY, single names):
-- `v0 = 0.04` (vol 20% squared)
-- `kappa = 2.0` (mean-reversion ~6 meses)
-- `theta = 0.04` (vol de largo plazo 20%)
-- `sigma_v = 0.3` (vol de vol, 30% puntos)
-- `rho = -0.7` (skew negativo pronunciado)
+**典型股票指数校准参考值（标普 500 等）**：
+- $v_0 = 0.04$（当前波动率 20% 平方）
+- $\kappa = 2.0$（均值回归半衰期约 4-6 个月）
+- $\theta = 0.04$（长期均值波动率 20%）
+- $\sigma_v = 0.30$（波动率的波动率 30%）
+- $\rho = -0.70$（显著负相关偏斜）
 
 ---
 
 ### 3.8 Bates 1996
 
-**Por que existe**: Heston + Merton jumps. Captura **dos fenomenos del
-mercado real** que BS/BS2 no capturan:
-- **Skew** (via Heston: `rho` negativo)
-- **Cola izquierda** (via Merton jumps: `mu_J` negativo, `lambda` > 0)
+**为何存在**：在 Heston 随机波动率的基础上，叠加了 Merton 泊松跳跃扩散过程（Jump-Diffusion）。同时捕获市场的**连续波动率偏斜**与**突发离散崩盘跳跃**。
 
-**Por que usarlo**:
-- **Captura crash risk real**: el mercado paga prima extra por proteccion
-  contra caidas bruscas. Bates captura esa prima.
-- **Smile empinada**: Bates fitetea mejor que Heston puro para opciones
-  deep OTM/ITM (los jumps agregan flexibilidad).
-- **O(1) con serie**: 15 terminos Poisson convergen rapido. ~6 ms/op.
-- **Calibrable**: 8 parametros (5 Heston + 3 jumps: lambda, mu_J, sigma_J).
+**为何选用**：
+- **精确捕获极端黑天鹅崩盘溢价**：深度虚值 Put 的价格不仅包含连续扩散风险，更包含市场对突发系统性跳空的恐惧补偿。
+- **15 项泊松级数快速收敛**：通过将 Bates 分解为条件 Heston 级数求和，在 ~6 ms 内完成高精度定价。
 
-**Por que NO usarlo**:
-- **El mas lento de los closed-form**: 6 ms/op (15 Heston calls). **~2500x
-  mas lento** que BS.
-- **Calibracion muy dificil**: 8 parametros. Requiere regularizacion fuerte
-  y datos abundantes.
-- **Overkill para backtest de vanilla**: si los datos historicos ya tienen
-  la sonrisa incorporada, no necesitas Bates.
-- **No captura stochastic vol-of-vol**: a diferencia de Heston-Nandi o
-  Bergomi (modelos de rough vol).
+**为何禁用 / 局限性**：
+- 耗时约 6 ms，是闭式解体系中最重型的方法，约为 BS 的 2500 倍。
+- 包含 8 个参数，若无充分的历史期权链截面数据容易过拟合。
 
-**Cuando es la eleccion correcta**:
-- **Backtest con eventos extremos**: FOMC, earnings, market crashes
-- **Pricing de opciones con cola izquierda importante** (puts deep OTM
-  en indices)
-- **Calibracion con datos que muestran jumps** (2010 flash crash, 2020
-  COVID, etc)
-- **Risk management** de portafolios con exposicion a tail risk
-
-**Tabla de decision**:
-
-| Si tenes... | Usa... |
-|-------------|--------|
-| Opcion ATM vanilla | BS (1000x mas rapido) |
-| Opcion OTM/ITM vanilla, smile normal | Heston (10x mas rapido que Bates) |
-| Opcion OTM/ITM con crash risk real | Bates |
-| Cola izquierda + smile | Bates |
-| Stress testing | Bates con `mu_J=-0.10, sigma_J=0.20` |
-
-**Parametros tipicos para equity US**:
-- Heston: como arriba
-- `lambda = 1.0` (1 salto esperado por ano, ~media para SPX)
-- `mu_J = -0.05` (saltos negativos pequenos, ~5% down)
-- `sigma_J = 0.10` (vol de los saltos, 10%)
+**典型跳跃参数参考**：
+- $\lambda = 1.0$（年均预期跳跃 1 次）
+- $\mu_J = -0.05$（发生跳跃时平均向下冲击 -5%）
+- $\sigma_J = 0.10$（跳跃幅度的标准差 10%）
 
 ---
 
-## 4. Tablas comparativas por caso de uso
+## 4. 业务场景横向对比表
 
-### Backtest masivo (>10k opciones)
+### 场景 A：大规模量化回测 (> 10,000 只期权)
 
-| Metodo | ops/sec | Smile | Cola pesada | Comentario |
-|--------|--------:|------|-------------|------------|
-| **BS** | 419k | NO | NO | Solo para ATM, europeas |
-| **BS2** | 276k | NO | NO | Americanas, O(1) |
-| **Heston** | 2.5k | SI | NO | Mejor balance speed/smile |
-| **Bates** | 160 | SI | SI | Mas realista pero 15x mas lento |
-| **Binomial** | 32-178 | NO | NO | Solo para validacion |
-
-**Regla**: para backtest masivo, **siempre** BS o BS2 a menos que necesites
-smile ocola pesada. Usar Heston solo cuando la sonrisa importa.
-
-### Pricing de opcion individual (1 opcion)
-
-Si tenes un unico strike/expiry y queres precision:
-
-| Objetivo | Metodo | Tiempo |
-|----------|--------|--------|
-| ATM europea | BS | 2.4 us |
-| OTM/ITM europea (con skew) | Heston | 400 us |
-| Americana con dividendos | BS2 (o Binomial si q>=r) | 4 us o 5 ms |
-| Con crash risk | Bates | 6 ms |
-| Validacion | Binomial N=2000 | 31 ms |
-
-### Greeks
-
-| Metodo | Computa | Tiempo | Comentario |
-|--------|---------|--------|------------|
-| `bs_greeks` (BS closed-form) | 5 greeks | 4 us | Solo europeos |
-| Finite differences sobre BS | 5 greeks | ~10 us | Funciona con cualquier pricer |
-| Finite differences sobre Heston | 5 greeks | ~1.6 ms | Captura smile en greeks |
-| Finite differences sobre Bates | 5 greeks | ~30 ms | Mas realista pero caro |
-
-### Implied Volatility
-
-| Metodo | Engine | Tiempo | Comentario |
-|--------|--------|--------|------------|
-| `iv` con BS | Bisection sobre BS | 82 us | Standalone |
-| `iv` con Binomial | Bisection sobre Binomial N=500 | ~3 ms | Para IV de americanas |
-| Manual sobre Heston | Newton sobre Heston | ~1 ms | Para IV con sonrisa |
-
-### IV con sonrisa (parametros Heston calibrados)
-
-Para pricar una opcion con la sonrisa implicita por Heston calibrado:
-
-1. Calibrar Heston al surface una vez (offline, scipy.optimize)
-2. Usar `heston_price` con los parametros calibrados (~400 us por opcion)
-3. Para backtest masivo: precomputar el modelo calibrado y pricar en batch
-
-**Alternativa**: usar el modulo de IV standalone sobre BS para cada opcion,
-y aplicar la sonrisa via un factor de ajuste. Mas rapido pero menos
-preciso.
+| 定价方法 | 吞吐量 (ops/sec) | 波动率微笑 | 尾部跳跃 | 选型判定 |
+|---------|----------------:|-----------|---------|---------|
+| **BS** | 419,000 | 否 | 否 | **欧式期权首选** |
+| **BS2** | 276,000 | 否 | 否 | **美式期权首选** |
+| **Heston** | 2,500 | **是** | 否 | **需要 Skew 时的最佳平衡方案** |
+| **Bates** | 160 | **是** | **是** | 仅用于极端压力测试样本 |
+| **Binomial** | 32 - 178 | 否 | 否 | 严禁在大规模循环中调用 |
 
 ---
 
-## 5. Anti-patrones y trampas comunes
+### 场景 B：单只期权截面精确定价
 
-### Anti-patrones de uso
+| 目标资产与期权属性 | 唯一推荐算法 | 耗时水准 |
+|-------------------|------------|---------|
+| 平值 ATM 欧式期权 | Black-Scholes | 2.4 us |
+| 跨执行价带明显 Skew 的欧式期权 | Heston 1993 | 400 us |
+| 带有分红标的的美式期权 | BS2（临界发散回退二叉树） | 3.6 us 至 5 ms |
+| 重大宏观事件（FOMC/财报日）深度虚值 Put | Bates 1996 | 6 ms |
+| 仲裁微小套利空间的标准真解 | Binomial N=2000 | 31 ms |
 
-**Anti-patron #1**: Usar binomial para backtest masivo.
+---
 
+## 5. 典型反模式与量化避坑指南
+
+### 常见反模式
+
+**反模式 1：在大规模回测循环中使用二叉树**
 ```python
-# MAL: 5.6 ms/op, 178 ops/sec
-for option in options:
+# 错误示范：单次 5.6 ms，100 万次计算需耗费近 2 小时
+for opt in chain:
     price = binomial_price(S, K, T, r, q, sigma, 500, 'call', 'european')
 
-# BIEN: 2.4 us/op, 419k ops/sec
-for option in options:
+# 正确姿势：单次 2.4 us，100 万次计算仅需 2.4 秒
+for opt in chain:
     price = bs_price(S, K, T, r, q, sigma, 'call')
 ```
 
-**Anti-patron #2**: Usar LSM para americana vanilla.
-
+**反模式 2：对标准美式期权滥用 LSM 模拟**
 ```python
-# MAL: 150 ms/op (cuando BS2 es 3.6 us)
+# 错误示范：耗时 150 ms/次，开销极其庞大
 price = lsm_price(S, K, T, r, q, sigma, 'put', paths=10000, steps=50)
 
-# BIEN: 3.6 us/op (mismo resultado, 40,000x mas rapido)
+# 正确姿势：耗时 3.6 us/次，提速 40,000 倍且精度等价
 price = bs2_american_price(S, K, T, r, q, sigma, 'put')
 ```
 
-**Anti-patron #3**: Asumir que BS2 es "tan exacto como BS".
-
+**反模式 3：误将 BS2 的近似解直接用于微小无风险套利捕捉**
 ```python
-# MAL: BS2 tiene ~0.5% error. Para arbitraje, eso importa.
+# 错误示范：BS2 固有 ~0.5% 逼近误差，微小价差可能是近似误差而非真实市场套利
 arb_edge = market_price - bs2_american_price(...)
 
-# BIEN: validar contra binomial para arbitraje
+# 正确姿势：套利判决必须以高步数二叉树作为基准
 ref = binomial_price(S, K, T, r, q, sigma, 2000, 'put', 'american')
 arb_edge = market_price - ref
 ```
 
-**Anti-patron #4**: Usar MC con pocos paths para validar.
-
+**反模式 4：深度虚值 Put 固守 BS 模型导致权利金严重低估**
 ```python
-# MAL: 1% de ruido en el "ground truth"
-mc_ref = mc_european_price(S, K, T, r, q, sigma, 'call', 1000, seed=42)
+# 错误示范：忽略了股票市场的负偏斜（Skew），算出的 OTM Put 理论价过于廉价
+put_price = bs_price(S, 0.7 * K, T, r, q, sigma, 'put')
 
-# BIEN: paths >= 100k para ruido < 0.1%
-mc_ref = mc_european_price(S, K, T, r, q, sigma, 'call', 100000, seed=42)
+# 正确姿势：使用 Heston 引入负相关 rho，准确捕获下行保护溢价
+put_price = heston_price(S, 0.7 * K, T, r, q, sigma,
+                         v0=sigma**2, kappa=2.0, theta=sigma**2,
+                         sigma_v=0.3, rho=-0.7, opt_type='put')
 ```
-
-**Anti-patron #5**: No fijar seed en MC/LSM.
-
-```python
-# MAL: cada corrida da resultado distinto
-mc = mc_european_price(...)
-
-# BIEN: reproducibilidad
-mc = mc_european_price(..., seed=42)
-```
-
-**Anti-patron #6**: Pagar prima de sonrisa con BS.
-
-```python
-# MAL: para deep OTM put, BS subestima el precio porque no ve el skew
-put_price = bs_price(S, 0.7*K, T, r, q, sigma, 'put')  # muy barato
-
-# BIEN: usar Heston (que captura skew negativo)
-put_price = heston_price(S, 0.7*K, T, r, q, sigma,
-                          v0=sigma**2, kappa=2, theta=sigma**2,
-                          sigma_v=0.3, rho=-0.7, opt_type='put')
-```
-
-### Trampas matematicas
-
-**Trampa #1**: Asumir que P(ITM) risk-neutral = frecuencia real-world.
-
-La P(S_T > K) bajo Q usa drift `r-q`. La frecuencia real-world usa
-la drift historica (que puede ser muy distinta). Para backtest de
-frecuencia, usar la drift esperada real como input.
-
-**Trampa #2**: Asumir put-call parity para americanas.
-
-P_am - C_am = S*exp(-qT) - K*exp(-rT) **NO** se cumple exactamente para
-americanas. Hay una cota pero no igualdad. Para la diferencia exacta,
-usar BAW o binomial en ambos lados.
-
-**Trampa #3**: Heston Feller condition.
-
-Heston asume que `2*kappa*theta > sigma_v^2` (Feller condition). Si
-no se cumple, la varianza puede tocar 0. Numericamente estable pero
-conceptualmente problematico. Calibrar con cuidado.
-
-**Trampa #4**: Bates con `lambda` muy alto.
-
-Si `lambda*T > 30` (mas de 30 saltos esperados), la serie Poisson
-converge muy lentamente y se necesita `n_terms` > 50. Performance se
-degrada linealmente con `n_terms`.
 
 ---
 
-## 6. Cuando NO usar este skill
+### 数学逻辑陷阱
 
-- **Opciones path-dependent complejas** (asian lookback, chooser,
-  compound): el framework MC se puede extender pero el skill no las
-  implementa out-of-the-box.
-- **Multi-asset** (basket, spread, rainbow): el skill no soporta
-  correlacion entre subyacentes. Usar QuantLib o implementar MC custom.
-- **Modelos de rough volatility** (Bergomi, rBergomi): no implementados.
-  Para estos, usar libreria especializada.
-- **Interest rate options** (caps, floors, swaptions): el modelo subyacente
-  es diferente (Hull-White, Black 76). Usar skill dedicado.
-- **Credit derivatives** (CDS, CDO): no implementado.
-- **High-frequency pricing** (microsegundos): Python no es el lenguaje
-  correcto. Usar C++/Rust o libreria QuantLib en C.
+**陷阱 1：将风险中性实值概率 P(ITM) 当作真实世界交易胜率**  
+在风险中性测度 $\mathbb{Q}$ 下，标的资产的漂移率为 $r - q$。而现实物理世界中资产具有客观预期收益率 $\mu$。若用于实盘胜率测算，必须将物理世界的预期漂移率传入算法。
 
-Para todos estos casos, **el framework es extensible**: copiar el skill,
-agregar las funciones, mantener la estructura.
+**陷阱 2：对美式期权强套看涨看跌平价公式 (Put-Call Parity)**  
+公式 $C - P = S e^{-qT} - K e^{-rT}$ **仅在欧式期权下严格成立**。美式期权由于提前行权权益的存在，平价公式退化为不等式区间约束。
+
+**陷阱 3：Heston Feller 条件违背**  
+Heston 理论要求满足 Feller 稳定性条件：$2 \kappa \theta > \sigma_v^2$。若参数校准违背此条件，方差在原点附近概率密度发散，数值积分需审慎处理。
 
 ---
 
-## Resumen ejecutivo
+## 6. 何时切勿使用本工具库
 
-1. **Para backtest de vanilla europea**: BS. Sin dudarlo. 419k ops/sec.
-2. **Para backtest de vanilla americana**: BS2. 276k ops/sec.
-3. **Si necesitas sonrisa (skew real)**: Heston. 2.5k ops/sec.
-4. **Si necesitas cola izquierda (crash risk)**: Bates. 160 ops/sec.
-5. **Para validar cualquier otro modelo**: Binomial N=2000. Gold standard.
-6. **Para payoffs custom**: MC con seed fija y paths >= 10k.
-7. **Para americana con payoff custom**: LSM, paciencia.
-8. **Para calibrar un modelo**: Heston (5 params) o Bates (8 params).
+- **强路径依赖型复杂衍生品**（如连续观测亚式期权、双向触碰障碍期权）：本库目前仅提供欧式 MC 框架，需基于该框架扩建专用 Payoff 逻辑。
+- **多标的资产奇异衍生品**（如篮子期权、价差期权、彩虹期权）：本库不包含资产间相关系数矩阵联合采样，需依赖多维模拟引擎。
+- **利率衍生品**（利率上限/下限 Caps/Floors、期权掉期 Swaptions）：标的资产服从利率期限结构模型（如 Hull-White、Black 76），应选用专用利率衍生品库。
+- **超高频纳秒级做市交易**：Python 语言存在微秒级固有解释器开销，实盘极速报单建议改用 C++ / Rust 实现。
 
-Y siempre: **medir performance con `time.perf_counter()` antes de
-asumirla**. La tabla de benchmarks en este documento fue medida, no
-asumida.
+---
+
+## 7. 执行总结
+
+1. **欧式香草期权回测**：坚定选用 **BS**（41.9 万次/秒）。
+2. **美式香草期权回测**：坚定选用 **BS2**（27.6 万次/秒）。
+3. **需刻画市场真实偏斜 (Skew)**：选用 **Heston**（2,500 次/秒）。
+4. **需对冲暴跌与黑天鹅跳跃**：选用 **Bates**（160 次/秒）。
+5. **裁决数值与模型真解**：选用 **Binomial N=2000**。
+6. **始终以严谨实测为依据**：本手册中所有微秒与吞吐指标均基于底层函数实测，绝无理论虚饰。
