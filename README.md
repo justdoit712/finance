@@ -22,7 +22,7 @@
 
 ---
 
-## 二、 保留的 8 大核心技能矩阵 (Retained Core Skills)
+## 二、 核心技能与功能模块 (Core Skills)
 
 全部技能遵循 [SKILL.md](https://skills.sh) 规范，代码轻量，无重型框架绑定。
 
