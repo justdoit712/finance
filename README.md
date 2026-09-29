@@ -4,7 +4,7 @@
 [![Base: main](https://img.shields.io/badge/root_base-main-blue.svg)](https://github.com/justdoit712/finance/tree/main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-本项目 `02-crypto` 分支专精于**加密货币与数字资产（Crypto / Web3 / Digital Assets）**的量化投研与实盘/模拟交易系统。在主干 `main`（保留全量 26 个通用技能）的基础上，精炼保留了 8 个与加密货币行情抓取、全网扫描、实盘下单接口、宏观流动性联动及底层量化回测密切相关的核心引擎，移除了无关的传统股票与微观财报模块，构建纯粹、专业的 7×24 小时加密资产量化环境。
+专用于加密货币与数字资产（Crypto / Web3）的量化投研与实盘/模拟交易。
 
 ---
 
