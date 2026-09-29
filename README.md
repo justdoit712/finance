@@ -1,7 +1,6 @@
 # 02-crypto 分支 — 加密货币与数字资产量化系统 (Crypto Quant System)
 
 [![Branch: 02-crypto](https://img.shields.io/badge/branch-02--crypto-orange.svg)](https://github.com/justdoit712/finance/tree/02-crypto)
-[![Base: main](https://img.shields.io/badge/root_base-main-blue.svg)](https://github.com/justdoit712/finance/tree/main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 专用于加密货币与数字资产（Crypto / Web3）的量化投研与实盘/模拟交易。
@@ -106,10 +105,4 @@ python skills/yahoo-finance/scripts/fetch_quote.py --tickers BTC-USD,ETH-USD,IBI
 python skills/portfolio/scripts/cli.py hrp
 ```
 
----
 
-## 五、 分支拓扑关系
-
-- **`main` 分支**：全量基础仓库（包含全部 26 个技能总库）。
-- **`01` 分支**：专精黄金白银（贵金属）量化投研。
-- **`02-crypto` 分支**：当前分支，专精于加密货币与数字资产量化系统。
