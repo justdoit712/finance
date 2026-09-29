@@ -1,51 +1,32 @@
-# Referencia de Ratios
+# 量化指标参考手册
 
-Cada ratio está implementado en `scripts/ratios.py` como funciones planas
-(sin clases), vectorizadas con numpy, que aceptan escalares y arrays 1-D.
+每个比率指标均在 `scripts/ratios.py` 中以平坦函数（非面向对象设计）形式实现，采用 NumPy 向量化运算，支持标量与一维数组输入。
 
-## Convención de Tipo de Retornos
+## 收益率计算口径惯例
 
-| Ratio | Tipo de Retorno | Razón |
+| 指标名称 | 输入收益率口径 | 设定缘由 |
 |-------|----------------|-------|
-| CAGR, Vol, Sharpe, Sortino | Lineales | Annualización estándar |
-| VaR, cVaR (todos), R², Beta, IR, TE | Lineales | Estimación ML / regresión |
-| Payoff, Profit Factor, WinLoss | **Log** | Propiedad asimétrica de log returns |
-| Rachev A/B/C, CSR, OWR, OLR | **Log** | Material del curso slides 82-86 |
-| Kelly | **Log** | Course notebooks `getKelly()` |
-| Risk of Ruin | Lineales | Course notebooks `RoR()` / `RoRemp()` |
+| CAGR（复合年化增长率）、Vol（波动率）、Sharpe（夏普比率）、Sortino（索提诺比率） | 线性收益率（Linear） | 符合标准金融年化口径 |
+| VaR（风险价值）、cVaR（条件风险价值/期望亏损）、R²、Beta、IR（信息比率）、TE（跟踪误差） | 线性收益率（Linear） | 机器学习统计估计与线性回归基准要求 |
+| Payoff（盈亏赔率比）、Profit Factor（利润因子）、WinLoss（胜负比） | **对数收益率（Log）** | 对数收益率在涨跌幅度上具备对称可加性 |
+| Rachev 比率 A/B/C、CSR（常识比率）、OWR（绝妙胜率）、OLR（绝妙负率） | **对数收益率（Log）** | 课程讲义 slides 82-86 规范要求 |
+| Kelly（凯利仓位配比公式） | **对数收益率（Log）** | 课程笔记本 `getKelly()` 的数学推导要求 |
+| Risk of Ruin（破产毁灭风险） | 线性收益率（Linear） | 课程笔记本 `RoR()` / `RoRemp()` 算法口径 |
 
-## Advertencias (del material del curso)
+## 实盘避坑要点与注意事项
 
-1. **Calmar degenera con el tiempo**: en más de 20 años, CAGR tiende a 5-7%
-   y MaxDD se pisa en ~40%, así que Calmar ≈ 0.1 para la mayoría de las
-   estrategias. Usar solo para comparaciones del mismo horizonte.
+1. **卡玛比率（Calmar Ratio）随时间衰减退化**：在跨度超过 20 年的历史周期中，大多数策略的复合年化增长率（CAGR）会趋于 5%~7%，而历史最大回撤（MaxDD）通常会经历某次股灾被钉死在约 40%，导致大多数策略的长期 Calmar 比率退化至约 0.1 左右。因此，卡玛比率仅适用于评估具有相同时间跨度的策略。
 
-2. **Kurtosis ≠ colas pesadas**: kurtosis alta puede significar concentración
-   en el pico, no necesariamente colas más pesadas. Siempre verificar los
-   quantiles reales de cola.
+2. **高峰度（Kurtosis）不直接等同于肥尾**：峰度过高可能仅仅代表样本点过度紧密地聚集在均值尖峰附近，而不必然意味着长尾部分存在肥尾极端事件。必须始终通过实证分布的实际分位数来检验真实尾部厚度。
 
-3. **VaR Normal vs Johnson SU**: Normal consistentemente **subestima** el VaR
-   (subestima el riesgo de cola). Johnson SU da error aproximadamente cero
-   (ni sobre ni subestimación sistemática). cVaR muestra el sesgo opuesto:
-   Normal **sobreestima** cVaR.
+3. **正态分布 VaR vs Johnson SU VaR**：正态分布假设会系统性**严重低估**实际 VaR（低估极端尾部崩盘风险）。采用 Johnson SU 分布建模则几乎不存在系统性偏差（无系统性高估或低估）。而 cVaR（条件风险价值）则呈现相反偏差：正态分布假设往往会**过度高估** cVaR。
 
-4. **Rachev A vs B vs C**: La mayoría de las librerías solo implementan A
-   (simple ratio de quantiles). El material del curso slides 82-85 introduce
-   B (medias de cola) y C (áreas ponderadas por KDE) para información más
-   rica.
+4. **Rachev 比率 A vs B vs C**：市面上绝大多数开源量化库仅实现了简单的分位数之比（A 型）。本体系依据课程讲义 slides 82-85 进一步引入了 B 型（尾部期望均值之比）与 C 型（基于核密度估计 KDE 的加权尾部积分面积比），能够更全面地刻画非对称极端损益分布。
 
-5. **Retornos lineales vs log para estadísticas de trades**: Payoff ratio,
-   profit factor y win/loss ratio DEBEN computarse sobre retornos log
-   (slides 77-80). Usar lineales introduce sesgo de asimetría.
+5. **交易统计指标必须使用对数收益率**：盈亏赔率比（Payoff ratio）、利润因子（Profit factor）以及胜负比（Win/loss ratio）必须严格基于对数收益率进行计算（课程讲义 slides 77-80）。使用线性百分比收益率会引入由于涨跌不对称性带来的虚假偏度偏差。
 
-6. **Look-ahead bias en ventanas móviles**: la normalización z-score y el
-   range bounding deben usar ventana **móvil** (rolling), no global, para
-   evitar data leakage.
+6. **滚动特征必须谨防前瞻偏差（未来函数）**：Z-Score 标准化以及区间极值压缩（Range bounding）必须严格采用**纯历史滚动窗口（Rolling Window）**，严禁使用全样本全局均值或极值，否则会导致严重的未来数据泄露（Data Leakage）。
 
-7. **Convención de retorno acumulado**: `cumulative_returns(r)[i]` = retorno
-   acumulado después de observar los retornos `r[0]..r[i]`. El último elemento
-   incluye todos los retornos.
+7. **累计收益率计算口径**：`cumulative_returns(r)[i]` 定义为观察到第 0 期至第 $i$ 期收益率 `r[0]..r[i]` 之后的累计净值表现。最后一个数组元素代表全样本的总累计复合收益。
 
-8. **Rolling Sharpe**: Usar ventana TTM. Los valores individuales de Sharpe
-   son ruidosos; analizar la distribución (histograma + KDE) sobre la serie
-   rolling.
+8. **滚动夏普比率（Rolling Sharpe）**：推荐采用过去 12 个月（TTM，通常为 252 交易日）作为滚动窗口。单个时点的夏普估值充满噪声，必须通过绘制滚动夏普的时间演变序列及其概率分布（直方图 + 核密度估计 KDE）来综合评判策略收益能力的稳定性。

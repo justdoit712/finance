@@ -1,95 +1,98 @@
-# Modelo Black-Litterman
+# 黑-莱特曼（Black-Litterman）资产配置模型
 
-## Problema que resuelve
+## 模型所解决的核心痛点
 
-Los modelos clásicos (Markowitz, NCO) tienen dos limitaciones importantes:
-1. Las restricciones son una forma indirecta de introducir una view propia,
-   pero limitan la optimización arbitrariamente.
-2. No permiten diferenciar la incertidumbre por activo (a veces estamos más
-   convencidos de ciertas views que de otras).
+经典的均值-方差优化模型（如马科维茨、传统二次规划）在实战中存在两大著名的致命缺陷：
+1. **输入极度敏感与极值权重（“误差最大化器”）**：投资者通常只能通过人工设置严格的权重上下限约束来间接表达主观倾向，但这种硬约束往往扭曲了资产配置的数学最优性。
+2. **无法显式刻画观点的差异化不确定性**：在实际投资中，投资经理对不同预测的把握程度截然不同（例如对某些确定性事件信心十足，对另一些趋势则疑虑未定），传统优化器对此完全无能为力。
 
-Black & Litterman (Goldman Sachs) desarrollan un modelo bayesiano que:
-- Parte de una **condición de equilibrio del mercado** (retornos implícitos
-  del portafolio de mercado vía CAPM inverso).
-- Permite al inversor introducir **views con incertidumbre**.
-- Genera un **vector de retornos a posteriori** combinando ambas fuentes.
+高盛（Goldman Sachs）的 Fischer Black 与 Robert Litterman 提出了著名的贝叶斯融合模型：
+- **以全市场均衡基准作为先验分布**：通过反向求解 CAPM 模型，以全市场流通市值加权的“市场组合”作为锚定先验，推导隐含均衡预期收益率。
+- **允许投资者表达带有置信度不确定性的主观观点（Views）**。
+- **贝叶斯后验合成**：通过高斯先验与似然的共轭更新，推导出兼顾市场共识与主观 Alpha 见解的**后验期望收益率向量**与后验协方差矩阵。
 
-## El Modelo
+## 数学理论模型
 
-### Distribución a priori (equilibrio de mercado)
+### 1. 先验分布（市场均衡状态）
 
 ```
-N ~ (Pi, tau * Sigma)
+N ~ (Π, τ · Σ)
 ```
 
-Donde:
-- **Pi**: retornos implícitos de equilibrio
-- **Sigma**: matriz de covarianza
-- **tau**: escalar de incertidumbre (típicamente 0.01-0.05)
+其中：
+- **$\Pi$（Pi）**：市场均衡隐含期望收益率向量（Implied Equilibrium Returns）。
+- **$\Sigma$（Sigma）**：各资产收益率的历史或收缩协方差矩阵。
+- **$\tau$（Tau）**：衡量先验估计相对不确定性的标量系数（实务中通常取值范围为 $0.01 \sim 0.05$）。
 
-### Pi = delta * Sigma * w_mkt
+### 隐含均衡收益率公式：$\Pi = \delta \cdot \Sigma \cdot w_{mkt}$
 
-- **delta**: aversión al riesgo implícita del mercado
-- **w_mkt**: ponderaciones del portafolio de mercado (market caps)
+- **$\delta$（Delta）**：全市场的隐含风险厌恶系数（Market Risk Aversion）：
+  $$\delta = \frac{E(R_m) - R_f}{\sigma_m^2}$$
+- **$w_{mkt}$**：全市场组合中各资产按流通市值归一化的配置权重向量。
 
-### Distribución de las Views
-
-```
-N ~ (Q, Omega)
-```
-
-Donde:
-- **Q**: vector de retornos esperados según las views (Kx1)
-- **Omega**: matriz de incertidumbre de las views (KxK)
-
-### Distribución a posteriori
+### 2. 投资者主观观点分布（Views）
 
 ```
-E(R) = [(tau*Sigma)^-1 + P^T Omega^-1 P]^-1 *
-       [(tau*Sigma)^-1 * Pi + P^T Omega^-1 * Q]
+N ~ (Q, Ω)
 ```
 
-**Sigma_post** = Sigma + [(tau*Sigma)^-1 + P^T Omega^-1 P]^-1
+其中：
+- **$Q$**：由 $K$ 项主观观点构成的预期超额收益率向量（维度为 $K \times 1$）。
+- **$\Omega$（Omega）**：主观观点误差项的协方差矩阵（维度为 $K \times K$），度量每项观点的不确定性程度。
 
-Donde **P** es la matriz de mapeo entre views y activos (KxN).
+### 3. 贝叶斯后验分布（Posterior Distribution）
 
-## Views
-
-### Absolutas
-```
-P = [1, 0, 0, ...]  →  Activo i tendrá retorno Q[i]
-```
-Ejemplo: `BMA: +25%`, `LOMA: +40%`, `MELI: -10%`
-
-### Relativas
-```
-P = [1, -1, 0, ...]  →  Activo i > Activo j en Q[k]
-```
-Ejemplo: `GGAL > SUPV + 11%`, `GGAL > BBAR + 7%`
-
-## Matriz Omega (Idzorek)
-
-Omega se construye proporcional a `P * Sigma * P^T`, escalado por las
-confidencias del inversor:
+根据广义贝叶斯线性回归更新法则，后验期望收益率向量计算如下：
 
 ```
-Omega[i,i] = (P * Sigma * P^T)[i,i] * (1 - conf_i) / conf_i * tau
+E(R) = [(τ·Σ)⁻¹ + Pᵀ · Ω⁻¹ · P]⁻¹ · [(τ·Σ)⁻¹ · Π + Pᵀ · Ω⁻¹ · Q]
 ```
 
-Donde `conf_i` está entre 0 (mínima confianza) y 1 (máxima confianza).
+后验协方差矩阵为：
 
-## Pipeline Completo
+```
+Σ_post = Σ + [(τ·Σ)⁻¹ + Pᵀ · Ω⁻¹ · P]⁻¹
+```
 
-1. Calcular **delta** = (E(Rm) - Rf) / sigma_m^2
-2. Calcular **Pi** = delta * Sigma * w_mkt
-3. Definir views (absolutas vía `view_dict`, relativas vía `view_pairs`)
-4. Construir **Omega** vía Idzorek con confidencias
-5. Calcular retornos **posteriores**
-6. Usar retornos posteriores en Markowitz / NCO
+其中 **$P$** 为观点关联矩阵（维度为 $K \times N$），每一行代表一项观点中各资产的暴露权重配比。
 
-## Extensiones
+## 主观观点表达类型（Views）
 
-- **Entropy Pooling (Meucci, 2006)**: generaliza BL usando máxima entropía,
-  permite views sobre distribuciones completas (no solo medias).
-- **Avramov (2004)**: modelo bayesiano de factores con clustering jerárquico.
-- **Dynamic BL**: adapta el modelo a múltiples periodos con views cambiantes.
+### 绝对观点（Absolute Views）
+```
+P = [1, 0, 0, ...]  →  单项资产 i 的预期绝对年化收益率为 Q[k]
+```
+示例：`BMA: +25%`, `LOMA: +40%`, `MELI: -10%`。
+
+### 相对观点（Relative Views）
+```
+P = [1, -1, 0, ...]  →  资产 i 相对于资产 j 的超额领先幅度为 Q[k]
+```
+示例：`GGAL > SUPV + 11%`（预期 GGAL 跑赢 SUPV 11 个百分点），`GGAL > BBAR + 7%`。每一行权重之和为 0。
+
+## Idzorek 观点不确定性矩阵 $\Omega$ 标定法
+
+在原始黑-莱特曼文献中，$\Omega$ 的具体数值较难直观设定。Idzorek (2005) 提出了基于直观**百分比置信度（Confidence）**的自动化对角化标定算法：
+
+$\Omega$ 的对角元素构造正比于投影方差 $P \cdot \Sigma \cdot P^T$，并按投资者的主观置信度进行缩放：
+
+```
+Ω[i, i] = (P · Σ · Pᵀ)[i, i] · ((1 − conf_i) / conf_i) · τ
+```
+
+其中 `conf_i` 为投资者对第 $i$ 项观点的主观置信度，取值介于 $0$（完全没有信心，方差趋近无穷大，观点被完全忽略）至 $1$（绝对确信，方差趋于 0，后验结果完全服从该观点）。
+
+## 完整执行流程（Pipeline）
+
+1. **计算全市场风险厌恶系数 $\delta$**：$\delta = (E(R_m) - R_f) / \sigma_m^2$。
+2. **反向求解市场均衡先验收益 $\Pi$**：$\Pi = \delta \cdot \Sigma \cdot w_{mkt}$。
+3. **构建主观观点向量与矩阵**：通过 `view_dict`（绝对观点）或 `view_pairs`（相对观点）生成 $P$ 矩阵与 $Q$ 向量。
+4. **基于 Idzorek 方法标定 $\Omega$ 矩阵**：输入各观点的置信度数组 `view_confidences`。
+5. **计算后验期望收益率向量 $E(R)$**。
+6. **将后验期望收益作为输入**：代入均值-方差优化器（Markowitz）或嵌套聚类优化器（NCO）求解最终的最优资产配置权重。
+
+## 前沿理论扩展
+
+- **熵池模型（Entropy Pooling, Meucci, 2006）**：通过最小相对熵（Kullback-Leibler 散度）泛化黑-莱特曼框架，允许投资者针对任意非正态分布形态（包括波动率、偏度、分位数及相关性）表达观点，突破了高斯线性分布的传统限制。
+- **贝叶斯变量选择多因子模型（Avramov, 2004）**：将贝叶斯模型平均（BMA）应用于投资组合因子选择与资产定价中。
+- **多期动态黑-莱特曼模型（Dynamic Black-Litterman）**：将模型扩展至跨期多阶段投资，主观观点与市场环境随时间动态状态转移。

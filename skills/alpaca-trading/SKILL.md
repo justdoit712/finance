@@ -1,340 +1,206 @@
 ---
 name: alpaca-trading
-description: "Trading API de Alpaca: órdenes, posiciones, cuenta. Paper trading y live trading de acciones, crypto y opciones."
+description: "Alpaca 交易 API：订单、持仓、账户管理。支持美股、加密货币与期权的模拟（Paper）及实盘交易。"
 license: MIT
 ---
 
-# Alpaca Trading — Trading API
+# Alpaca Trading — 实盘与模拟交易 API
 
-API para trading de acciones, crypto y opciones. Soporta paper trading (gratis) y live trading.
+提供股票、加密货币与期权的自动化交易接口。支持免费模拟交易（Paper Trading）与实盘（Live Trading）无缝切换。
 
 **Base URLs:**
-- Paper: `https://paper-api.alpaca.markets`
-- Live: `https://api.alpaca.markets`
-- SDK: `pip install alpaca-py`
+- 模拟环境 (Paper): `https://paper-api.alpaca.markets`
+- 实盘环境 (Live): `https://api.alpaca.markets`
+- 官方 SDK: `pip install alpaca-py`
 
-**Docs:** [docs.alpaca.markets](https://docs.alpaca.markets/us/docs/trading-api)
+**官方文档:** [docs.alpaca.markets](https://docs.alpaca.markets/us/docs/trading-api)
 
 ---
 
-## Autenticación
+## 身份认证与客户端初始化
 
-### Obtener API Keys
+### 获取 API Keys
 
-1. Ir a [app.alpaca.markets](https://app.alpaca.markets)
-2. Crear cuenta (paper trading es gratis)
-3. Ir a "API Keys" → Generate New Keys
+1. 前往 [app.alpaca.markets](https://app.alpaca.markets) 注册账户；
+2. 免费开通 Paper Trading 模拟账户；
+3. 进入 "API Keys" 页面生成并复制 API Key 和 Secret Key。
 
-### Configuración
+### 代码配置
 
 ```python
 import os
 from alpaca.trading.client import TradingClient
 
-# Para paper trading
+# 模拟交易环境配置 (Paper Trading)
 API_KEY = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
-BASE_URL = "https://paper-api.alpaca.markets"  # Paper
 
-# Para live trading
-# BASE_URL = "https://api.alpaca.markets"
-
+# paper=True 自动连接模拟环境，paper=False 连接实盘环境
 client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 ```
 
-**⚠️ NUNCA hardcodear keys. Usar variables de entorno.**
+**⚠️ 绝对不要在代码中硬编码秘钥，必须使用环境变量管理。**
 
 ---
 
-## Rate Limits
+## 请求频率限制 (Rate Limits)
 
-| API | Límite |
-|-----|--------|
-| Orders | 200 requests/min |
-| Account/Positions | 200 requests/min |
-| Account Activities | 200 requests/min |
+| 业务接口 | 频率上限 |
+|:---|:---:|
+| 订单接口 (Orders) | 200 次请求/分钟 |
+| 账户与持仓 (Account/Positions) | 200 次请求/分钟 |
+| 资金异动记录 (Activities) | 200 次请求/分钟 |
 
-### Recomendaciones
+### 交易系统设计建议
 
-- **Usar WebSocket para updates en tiempo real** — más eficiente que polling
-- **Cachear account/positions** — no consultar constantemente
-- **Implementar retry con exponential backoff** para 429 errors
+- **使用 WebSocket 流接收订单状态**：比轮询 (Polling) 效率更高且不消耗 HTTP 限额；
+- **本地缓存持仓信息**：避免在策略循环中高频重复调用持仓接口；
+- **实现指数退避重试**：防范偶发 429 报错。
 
 ---
 
-## Account
+## 账户管理 (Account)
 
-### Obtener Información de Cuenta
+### 获取账户概况与购买力
 
 ```python
 account = client.get_account()
-print(f"Buying Power: ${account.buying_power}")
-print(f"Cash: ${account.cash}")
-print(f"Portfolio Value: ${account.portfolio_value}")
-print(f"Status: {account.status}")
+print(f"购买力 (Buying Power): ${account.buying_power}")
+print(f"现金余额 (Cash): ${account.cash}")
+print(f"组合总资产 (Portfolio Value): ${account.portfolio_value}")
+print(f"账户状态 (Status): {account.status}")
 ```
 
-### Configuración de Cuenta
+### 更新账户偏好设置
 
 ```python
 from alpaca.trading.requests import AccountConfigurationsRequest
 
 config_request = AccountConfigurationsRequest(
     trade_confirmation_email=True,
-    susi_transfer_email=True
+    suspend_trade=False
 )
 client.update_account_configuration(config_request)
 ```
 
 ---
 
-## Assets
+## 订单管理 (Orders)
 
-### Listar Todos los Assets
+### 常用订单类型
 
-```python
-from alpaca.trading.requests import GetAssetsRequest
-from alpaca.trading.enums import AssetClass, AssetStatus
+| 类型 | 说明 |
+|:---|:---|
+| `market` | 市价单：以当前最优可成交价立即执行 |
+| `limit` | 限价单：买入不高于限价，卖出不低于限价 |
+| `stop` | 止损市价单：当价格达到触发价时以市价单委托 |
+| `stop_limit` | 止损限价单：达到触发价后以指定限价挂单 |
+| `trailing_stop` | 追踪止损单：随行情高低点动态跟踪止损价 |
 
-request = GetAssetsRequest(
-    asset_class=AssetClass.US_EQUITY,
-    status=AssetStatus.ACTIVE
-)
+### 有效期类型 (Time in Force)
 
-assets = client.get_all_assets(request)
+| 标识 | 说明 |
+|:---|:---|
+| `day` | 当日有效（收盘未成交自动撤单） |
+| `gtc` | 撤销前持续有效 (Good Till Cancelled) |
+| `ioc` | 立即成交并取消剩余 (Immediate Or Cancel) |
+| `fok` | 全部成交否则全部取消 (Fill Or Kill) |
 
-# Filtrar symbols tradables
-tradable = [a for a in assets if a.tradable]
-print(f"Assets tradables: {len(tradable)}")
-```
-
-### Obtener Asset Específico
-
-```python
-asset = client.get_asset("AAPL")
-print(f"AAPL tradable: {asset.tradable}")
-print(f"AAPL class: {asset.asset_class}")
-```
-
----
-
-## Orders
-
-### Tipos de Órdenes
-
-| Tipo | Descripción |
-|------|-------------|
-| `market` | Ejecuta al precio actual |
-| `limit` | Precio máximo (buy) o mínimo (sell) |
-| `stop` | Activa orden de mercado cuando alcanza stop_price |
-| `stop_limit` | Combina stop + limit |
-| `trailing_stop` | Stop relativo al precio |
-
-### Time in Force
-
-| TIF | Descripción |
-|-----|-------------|
-| `day` | Solo para día actual |
-| `gtc` | Good Till Cancelled |
-| `opg` | Open at market open |
-| `cls` | Close at market close |
-| `ioc` | Immediate Or Cancel |
-| `fok` | Fill Or Kill |
-
-### Crear Orden de Market
+### 提交市价单
 
 ```python
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 order_request = MarketOrderRequest(
-    symbol="AAPL",
-    qty=10,
+    symbol="BTC/USD",             # 支持股票或加密交易对
+    qty=0.05,                    # 加密货币支持碎股/分数买入
     side=OrderSide.BUY,
-    time_in_force=TimeInForce.DAY
+    time_in_force=TimeInForce.GTC
 )
 
 order = client.submit_order(order_request)
-print(f"Order ID: {order.id}")
-print(f"Status: {order.status}")
+print(f"订单提交成功，ID: {order.id}，状态: {order.status}")
 ```
 
-### Crear Orden Limit
+### 提交限价单
 
 ```python
 from alpaca.trading.requests import LimitOrderRequest
 
 order_request = LimitOrderRequest(
-    symbol="AAPL",
-    qty=10,
+    symbol="BTC/USD",
+    qty=0.1,
     side=OrderSide.BUY,
-    limit_price=150.00,  # Máximo a pagar
+    limit_price=60000.00,        # 最高愿意支付的价格
     time_in_force=TimeInForce.GTC
 )
 
 order = client.submit_order(order_request)
 ```
 
-### Crear Orden Stop
+### 撤销订单
 
 ```python
-from alpaca.trading.requests import StopOrderRequest
-
-order_request = StopOrderRequest(
-    symbol="AAPL",
-    qty=10,
-    side=OrderSide.SELL,
-    stop_price=145.00,  # Vende cuando caiga a este precio
-    time_in_force=TimeInForce.GTC
-)
-```
-
-### Obtener Órdenes
-
-```python
-# Todas las órdenes abiertas
-open_orders = client.get_orders(status="open")
-print(f"Órdenes abiertas: {len(open_orders)}")
-
-# Órdenes filladas hoy
-from datetime import datetime
-filled_orders = client.get_orders(
-    status="fill",
-    start=datetime(2024, 1, 15)
-)
-
-# Orden por ID
-order = client.get_order_by_id(order_id)
-```
-
-### Cancelar Órdenes
-
-```python
-# Cancelar una orden
+# 按 ID 撤销单笔订单
 client.cancel_order(order_id)
 
-# Cancelar todas las órdenes abiertas
+# 一键撤销当前所有挂单
 client.cancel_orders()
-```
-
-### Reemplazar Orden
-
-```python
-from alpaca.trading.requests import ReplaceOrderRequest
-
-replace_request = ReplaceOrderRequest(
-    limit_price=155.00,  # Nuevo precio límite
-    qty=15               # Nueva cantidad
-)
-client.replace_order(order_id, replace_request)
 ```
 
 ---
 
-## Positions
+## 持仓管理 (Positions)
 
-### Obtener Posiciones Abiertas
+### 获取全部活跃持仓
 
 ```python
 positions = client.get_all_positions()
 
 for pos in positions:
-    print(f"{pos.symbol}: {pos.qty} shares")
-    print(f"  Avg Entry: ${pos.avg_entry_price}")
-    print(f"  Market Value: ${pos.market_value}")
-    print(f"  P/L: ${pos.unrealized_pl}")
+    print(f"标的: {pos.symbol}, 持仓量: {pos.qty}")
+    print(f"  均价: ${pos.avg_entry_price}, 市值: ${pos.market_value}")
+    print(f"  未实现盈亏: ${pos.unrealized_pl} ({float(pos.unrealized_plpc)*100:.2f}%)")
 ```
 
-### Obtener Posición Específica
+### 平仓操作
 
 ```python
-position = client.get_position("AAPL")
-print(f"AAPL: {position.qty} shares @ ${position.avg_entry_price}")
-```
+# 全部平掉指定标的
+client.close_position("BTC/USD")
 
-### Cerrar Posición
+# 部分平仓（例如平掉 0.02 个 BTC）
+client.close_position("BTC/USD", qty=0.02)
 
-```python
-# Cerrar toda la posición
-client.close_position("AAPL")
-
-# Cerrar posición parcialmente (qty=5)
-client.close_position("AAPL", qty=5)
-```
-
-### Cerrar Todas las Posiciones
-
-```python
+# 一键清仓所有资产（紧急避险）
 client.close_all_positions()
 ```
 
 ---
 
-## Options Trading
+## 加密货币实盘交易专章 (Crypto Trading)
 
-### Trading Levels
-
-| Level | Descripción |
-|-------|-------------|
-| 0 | Sin trading de opciones |
-| 1 | Covered calls, cash-secured puts |
-| 2 | Buy/sell calls y puts |
-| 3 | Spreads |
-
-### Obtener Option Contracts
-
-```python
-from alpaca.trading.requests import GetOptionContractsRequest
-from datetime import datetime, timedelta
-
-request = GetOptionContractsRequest(
-    underlying_symbols=["AAPL"],
-    expiration_date_gte=datetime.now().strftime("%Y-%m-%d"),
-    expiration_date_lte=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-    strike_price_gte=100,
-    strike_price_lte=200,
-    limit=100
-)
-
-contracts = client.get_option_contracts(request)
-contract = contracts.option_contracts[0]
-
-# Trade con contract ID
-order_request = MarketOrderRequest(
-    symbol=contract.id,  # Usar ID del contract
-    qty=1,
-    side=OrderSide.BUY,
-    time_in_force=TimeInForce.DAY
-)
-```
-
-### Ejercitar Opción
-
-```python
-# Ejercer una posición de opción
-client.exercise_options(position_id)
-```
-
----
-
-## Crypto Trading
-
-### Listar Symbols Disponibles
+### 查询可交易代币清单
 
 ```python
 from alpaca.trading.enums import AssetClass
 
 crypto_assets = client.get_all_assets(asset_class=AssetClass.CRYPTO)
-crypto = [a for a in crypto_assets if a.tradable]
-print(f"Crypto tradables: {[a.symbol for a in crypto[:10]]}")
+tradables = [a.symbol for a in crypto_assets if a.tradable]
+print(f"当前支持交易的加密货币总数: {len(tradables)}")
+print(f"前 10 个可交易币种: {tradables[:10]}")
 ```
 
-### Órdenes de Crypto
+### 加密货币下单范式（支持 7×24 小时）
 
 ```python
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+
 order_request = MarketOrderRequest(
-    symbol="BTC/USD",
-    qty=0.1,  # Fracciones permitidas
+    symbol="ETH/USD",
+    qty=1.5,
     side=OrderSide.BUY,
     time_in_force=TimeInForce.GTC
 )
@@ -343,72 +209,16 @@ client.submit_order(order_request)
 
 ---
 
-## Market Hours
-
-### Obtener Clock
-
-```python
-clock = client.get_clock()
-print(f"Market open: {clock.is_open}")
-print(f"Next open: {clock.next_open}")
-print(f"Next close: {clock.next_close}")
-```
-
-### Verificar si Mercado está Abierto
-
-```python
-if clock.is_open:
-    print("Mercado abierto - puedes tradear")
-else:
-    print("Mercado cerrado")
-```
-
----
-
-## Portfolio History
-
-```python
-from datetime import datetime
-
-history = client.get_account_portfolio_history(
-    date_start=datetime(2024, 1, 1),
-    timeframe="1D"
-)
-
-print(f"Equity: {history.equity}")
-print(f"Profit/Loss: {history.profit_loss}")
-```
-
----
-
-## Watchlists
-
-```python
-from alpaca.trading.requests import CreateWatchlistRequest
-
-# Crear watchlist
-watchlist = client.create_watchlist(
-    CreateWatchlistRequest(name="Tech Stocks")
-)
-
-# Agregar símbolo
-client.add_to_watchlist(watchlist.id, "AAPL")
-
-# Obtener watchlists
-watchlists = client.get_watchlists()
-```
-
----
-
-## WebSocket Streaming
+## WebSocket 实时交易流推送
 
 ```python
 from alpaca.trading.stream import TradingStream
 
-async def handle_trade_update(data):
-    print(f"Update: {data}")
-
 stream = TradingStream(API_KEY, SECRET_KEY, paper=True)
+
+async def handle_trade_update(data):
+    # 当订单被部分撮合、完全成交或撤销时实时推送
+    print(f"收到成交动态: {data.event} - 标的: {data.order['symbol']} - 数量: {data.order['filled_qty']}")
 
 stream.subscribe_trade_updates(handle_trade_update)
 stream.run()
@@ -416,45 +226,12 @@ stream.run()
 
 ---
 
-## Scripts de Ejemplo
+## 模拟交易 (Paper) 与实盘 (Live) 对比
 
-Ver [./scripts/](./scripts/):
-
-```bash
-# Ver cuenta
-python ./scripts/check_account.py
-
-# Ver posiciones
-python ./scripts/check_positions.py
-
-# Enviar orden de prueba
-python ./scripts/place_order.py --symbol AAPL --qty 10 --side buy --type market
-```
-
----
-
-## Errores Comunes
-
-| Error | Causa | Solución |
-|-------|-------|----------|
-| 403 Forbidden | Keys inválidas | Verificar API keys |
-| 403 | Sin permisos | Habilitar en dashboard |
-| 400 Bad Request | Parámetros inválidos | Ver docs de orden |
-| 403 Trading Halted | Trading pausado | Esperar o verificar |
-| 403 No Buying Power | Sin fondos | Depositar dinero |
-| 422 | Symbol no tradable | Verificar symbol |
-| 429 Too Many Requests | Rate limit | Implementar backoff |
-
----
-
-## Comparación: Paper vs Live
-
-| Aspecto | Paper | Live |
-|---------|-------|------|
-| URL | paper-api.alpaca.markets | api.alpaca.markets |
-| Dinero real | ❌ No | ✅ Sí |
-| Órdenes reales | ❌ Simuladas | ✅ Reales |
-| Datos de mercado | ✅ Reales | ✅ Reales |
-| Para testing | ✅ Ideal | ❌ No |
-
-**Siempre probar en paper primero.**
+| 维度 | 模拟交易 (Paper) | 实盘交易 (Live) |
+|:---|:---:|:---:|
+| **接口地址** | `paper-api.alpaca.markets` | `api.alpaca.markets` |
+| **真实资金风险** | ❌ 无任何资金风险 | ⚠️ 真实资金结算 |
+| **成交模式** | 根据真实盘口模拟撮合 | 真实交易所撮合成交 |
+| **行情数据** | ✅ 真实实时市场数据 | ✅ 真实实时市场数据 |
+| **推荐流程** | **必须先在模拟盘充分回测验证** | 策略稳定后再切入实盘 |

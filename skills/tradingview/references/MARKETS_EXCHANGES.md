@@ -1,334 +1,328 @@
-# Markets, Exchanges y Countries — Referencia
+# 市场 (Markets)、交易所 (Exchanges) 与国家 (Countries) 参考指南
 
-> Lista de mercados, exchanges y paises usables como `market`,
-> `exchange` filter y `country` filter en el Scanner API y Symbol Search.
-
----
-
-## Indice
-
-1. [Markets validos](#1-markets-validos)
-2. [Exchanges por mercado](#2-exchanges-por-mercado)
-3. [Countries validos](#3-countries-validos)
-4. [Tickers — formato por mercado](#4-tickers--formato-por-mercado)
-5. [Decisiones tipicas: que market usar](#5-decisiones-tipicas-que-market-usar)
-6. [Lista completa de exchanges identificados](#6-lista-completa-de-exchanges-identificados)
+> 本文列出了在 Scanner API 与 Symbol Search 中可用作 `market` 参数、`exchange` 过滤字段和 `country` 过滤字段的有效市场、交易所及国家代码清单。
 
 ---
 
-## 1. Markets validos
+## 目录
 
-El parametro `{market}` en `POST /{market}/scan` controla el universo que
-se consulta. Lista verificada al 2026-06.
+1. [有效市场代码 (Markets)](#1-有效市场代码-markets)
+2. [各市场对应的交易所 (Exchanges)](#2-各市场对应的交易所-exchanges)
+3. [有效国家名称 (Countries)](#3-有效国家名称-countries)
+4. [各市场标的代码 (Tickers) 格式规范](#4-各市场标的代码-tickers-格式规范)
+5. [常见决策：该选用哪个 market](#5-常见决策该选用哪个-market)
+6. [已识别交易所完整清单](#6-已识别交易所完整清单)
 
-| Market | Descripcion | Cobertura aprox |
+---
+
+## 1. 有效市场代码 (Markets)
+
+`POST /{market}/scan` 请求中的 `{market}` 参数控制了查询检索的资产池范围。以下为截至 2026-06 验证的有效市场列表：
+
+| 市场代码 (Market) | 描述 | 大致覆盖品种数量 |
 |--------|-------------|-----------------|
-| `global` | Universo combinado | 100k+ |
-| `america` | NYSE + NASDAQ + AMEX + OTC | 15k+ |
-| `argentina` | BCBA / BYMA | 300+ |
-| `brazil` | B3 / Bovespa | 500+ |
-| `spain` | BME | 200+ |
-| `italy` | Borsa Italiana | 400+ |
-| `germany` | Xetra + Frankfurt | 1000+ |
-| `uk` | LSE | 2000+ |
-| `france` | Euronext Paris | 800+ |
-| `russia` | MOEX | 200+ |
-| `crypto` | Cryptos | 50k+ |
-| `forex` | Forex pairs | 1000+ |
-| `bonds` | Bonos globales (TVC) | 300+ |
+| `global` | 全球综合市场资产池 | 100k+ |
+| `america` | 美股：NYSE + NASDAQ + AMEX + OTC | 15k+ |
+| `argentina` | 阿根廷：BCBA / BYMA | 300+ |
+| `brazil` | 巴西：B3 / Bovespa | 500+ |
+| `spain` | 西班牙：BME | 200+ |
+| `italy` | 意大利：Borsa Italiana | 400+ |
+| `germany` | 德国：Xetra + Frankfurt | 1000+ |
+| `uk` | 英国：LSE | 2000+ |
+| `france` | 法国：Euronext Paris | 800+ |
+| `russia` | 俄罗斯：MOEX | 200+ |
+| `crypto` | 加密货币 | 50k+ |
+| `forex` | 外汇货币对 | 1000+ |
+| `bonds` | 全球债券 (TVC) | 300+ |
 
-### Invalidos confirmados (HTTP 404)
+### 已确认的无效市场（返回 HTTP 404）
 
-`asia`, `world` — no existen como market segments.
+`asia`、`world` —— 这两个不存在作为独立的 market 分段。
 
 ---
 
-## 2. Exchanges por mercado
+## 2. 各市场对应的交易所 (Exchanges)
 
 ### america
 
-| Exchange code | Nombre | Tipos comunes |
+| 交易所代码 | 交易所名称 | 常见品种类型 |
 |---------------|--------|---------------|
-| `NASDAQ` | Nasdaq Stock Market | stocks, ETFs, dr (CEDEARs, ADRs) |
-| `NYSE` | New York Stock Exchange | stocks, dr |
-| `AMEX` | American Stock Exchange | ETFs principalmente |
-| `OTC` | Over-the-counter | Stocks pequeñas, pink sheets |
+| `NASDAQ` | 纳斯达克证券交易所 (Nasdaq Stock Market) | 股票、ETF、存托凭证 (CEDEAR、ADR) |
+| `NYSE` | 纽约证券交易所 (New York Stock Exchange) | 股票、存托凭证 (DR) |
+| `AMEX` | 美洲证券交易所 (American Stock Exchange) | 主要是 ETF |
+| `OTC` | 场外交易市场 (Over-the-counter) | 小型股票、粉单市场 (Pink sheets) |
 
 ### argentina (BYMA / BCBA)
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `BCBA` | Bolsa de Comercio de Buenos Aires (alias BYMA) |
-| `BYMA` | Bolsas y Mercados Argentinos |
+| `BCBA` | 布宜诺斯艾利斯证券交易所 (Bolsa de Comercio de Buenos Aires，亦称 BYMA) |
+| `BYMA` | 阿根廷证券市场 (Bolsas y Mercados Argentinos) |
 
-Ambos codes existen; `BCBA` es el mas usado historicamente.
+两种代码均有效；`BCBA` 是历史上使用最广泛的代码。
 
 ### brazil
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `BMFBOVESPA` | B3 — Brasil Bolsa Balcao |
+| `BMFBOVESPA` | 巴西证券交易所 (B3 — Brasil Bolsa Balcao) |
 
 ### spain
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `BME` | Bolsas y Mercados Españoles |
+| `BME` | 西班牙证券市场公司 (Bolsas y Mercados Españoles) |
 
 ### italy
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `MIL` | Borsa Italiana (Milano) |
-| `EUROTLX` | EuroTLX |
+| `MIL` | 意大利证券交易所 (Borsa Italiana，米兰) |
+| `EUROTLX` | 欧洲多边交易设施 (EuroTLX) |
 
 ### germany
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `XETR` | Xetra |
-| `FWB` | Frankfurter Wertpapierborse |
-| `MUN`, `BER`, `DUS`, `HAM`, `STU` | Bolsas regionales |
+| `XETR` | 德国电子交易平台 (Xetra) |
+| `FWB` | 法兰克福证券交易所 (Frankfurter Wertpapierborse) |
+| `MUN`, `BER`, `DUS`, `HAM`, `STU` | 德国各地方证券交易所 |
 
 ### uk
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `LSE` | London Stock Exchange |
-| `LSIN` | LSE International |
-| `AQUIS` | Aquis Stock Exchange |
+| `LSE` | 伦敦证券交易所 (London Stock Exchange) |
+| `LSIN` | 伦敦证券交易所国际板 (LSE International) |
+| `AQUIS` | 阿奎斯证券交易所 (Aquis Stock Exchange) |
 
 ### france
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `EURONEXT` | Euronext (Paris, Amsterdam, Brussels) |
+| `EURONEXT` | 泛欧交易所 (巴黎、阿姆斯特丹、布鲁塞尔等) |
 
 ### crypto
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `BINANCE` | Binance |
+| `BINANCE` | 币安 (Binance) |
 | `COINBASE` | Coinbase |
 | `BITSTAMP` | Bitstamp |
 | `KRAKEN` | Kraken |
 | `BYBIT` | Bybit |
 | `OKX` | OKX |
 | `BITFINEX` | Bitfinex |
-| `HUOBI` | Huobi |
+| `HUOBI` | 火币 (Huobi) |
 | `BITTREX` | Bittrex |
 | `POLONIEX` | Poloniex |
 
 ### forex
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `FX` | FX (broker agregado) |
-| `OANDA` | OANDA |
+| `FX` | 聚合外汇行情经纪商 (FX) |
+| `OANDA` | 安达 (OANDA) |
 | `FX_IDC` | International Datacasting |
-| `SAXO` | Saxo Bank |
+| `SAXO` | 盛宝银行 (Saxo Bank) |
 
 ### bonds
 
-| Exchange code | Nombre |
+| 交易所代码 | 交易所名称 |
 |---------------|--------|
-| `TVC` | TradingView (datos sinteticos de yield curves) |
+| `TVC` | TradingView 官方计算源 (收益率曲线综合数据) |
 
 ---
 
-## 3. Countries validos
+## 3. 有效国家名称 (Countries)
 
-Para filtrar por `country` en el Scanner:
+在 Scanner 中按国家过滤的语法示例：
 
 ```json
 {"left": "country", "operation": "equal", "right": "Argentina"}
 ```
 
-Lista de countries comunes (no exhaustiva — usar `equal` con cualquier
-nombre estandar en ingles):
+常用国家英文名称列表（非穷尽列表 —— 支持使用任何符合英文标准命名的国家，配合 `equal` 筛选）：
 
-**Americas:**
+**美洲 (Americas):**
 `United States`, `Argentina`, `Brazil`, `Canada`, `Chile`, `Colombia`,
 `Mexico`, `Peru`, `Uruguay`, `Venezuela`.
 
-**Europa:**
+**欧洲 (Europe):**
 `United Kingdom`, `Germany`, `France`, `Italy`, `Spain`, `Portugal`,
 `Netherlands`, `Belgium`, `Switzerland`, `Austria`, `Sweden`, `Norway`,
 `Denmark`, `Finland`, `Ireland`, `Poland`, `Czech Republic`, `Greece`,
 `Russia`, `Turkey`, `Ukraine`.
 
-**Asia:**
+**亚洲 (Asia):**
 `Japan`, `China`, `Hong Kong`, `Taiwan`, `South Korea`, `India`,
 `Singapore`, `Malaysia`, `Thailand`, `Indonesia`, `Philippines`, `Vietnam`,
 `Israel`, `Saudi Arabia`, `United Arab Emirates`, `Qatar`.
 
-**Oceania:**
+**大洋洲 (Oceania):**
 `Australia`, `New Zealand`.
 
-**Africa:**
+**非洲 (Africa):**
 `South Africa`, `Egypt`, `Nigeria`, `Kenya`, `Morocco`.
 
-> **Importante:** la API es **case-sensitive** y exige el formato exacto
-> en ingles. `argentina` (minuscula) → 0 results. `Argentina` → matches.
+> **重要提示：** API 严格**区分大小写 (case-sensitive)**，且必须使用规范的英文名称。如传入小写 `argentina` 会返回 0 条结果，而传入 `Argentina` 方可正确匹配。
 
-### Ejemplos:
+### 实战示例：
 
 ```bash
-# Empresas argentinas (incluye ADRs cotizando en US)
+# 阿根廷所有企业（包含在美国挂牌的 ADR）
 py fetch_tradingview.py country Argentina
 
-# Empresas listadas EN argentina (local solo)
+# 仅在阿根廷本土交易所上市的企业
 py fetch_tradingview.py screen --filter '[["country","equal","Argentina"],["exchange","equal","BCBA"]]'
 
-# Empresas brasileras en NYSE (ADRs)
+# 在纽交所挂牌上市的巴西企业 (ADR)
 py fetch_tradingview.py screen --filter '[["country","equal","Brazil"],["exchange","equal","NYSE"]]'
 ```
 
 ---
 
-## 4. Tickers — formato por mercado
+## 4. 各市场标的代码 (Tickers) 格式规范
 
-| Mercado | Formato | Ejemplos |
+| 市场/品种 | 格式规范 | 示例 |
 |---------|---------|----------|
-| US stocks | `{EXCHANGE}:{TICKER}` | `NASDAQ:AAPL`, `NYSE:JPM`, `AMEX:SPY` |
-| US ADRs | `{EXCHANGE}:{TICKER}` | `NASDAQ:GGAL`, `NYSE:BBAR` (con D suffix para algunos) |
-| Argentina | `BCBA:{TICKER}` | `BCBA:GGAL`, `BCBA:YPF`, `BCBA:PAMP` |
-| Argentina CEDEARs | `BCBA:{TICKER}` (mismo formato local) | `BCBA:AAPL`, `BCBA:KO` |
-| Brazil | `BMFBOVESPA:{TICKER}{NUM}` | `BMFBOVESPA:PETR4`, `BMFBOVESPA:VALE3` |
-| Spain | `BME:{TICKER}` | `BME:SAN`, `BME:TEF`, `BME:IBE` |
-| Germany | `XETR:{TICKER}` | `XETR:SAP`, `XETR:VOW3`, `XETR:BMW` |
-| UK | `LSE:{TICKER}` | `LSE:HSBA`, `LSE:VOD` |
-| Crypto | `{EXCHANGE}:{PAIR}` | `BINANCE:BTCUSDT`, `COINBASE:ETHUSD` |
-| Forex | `FX:{PAIR}` | `FX:EURUSD`, `OANDA:GBPUSD` |
-| Bonos | `TVC:{CODIGO}` | `TVC:US10Y`, `TVC:DE10Y`, `TVC:AR10Y` |
-| Indices | `{EXCHANGE}:{INDEX}` | `INDEX:NDX`, `INDEX:DJI`, `INDEX:SPX`, `INDEX:ARG30` |
+| 美股普通股 | `{EXCHANGE}:{TICKER}` | `NASDAQ:AAPL`, `NYSE:JPM`, `AMEX:SPY` |
+| 美股 ADR | `{EXCHANGE}:{TICKER}` | `NASDAQ:GGAL`, `NYSE:BBAR` (部分可能带有 D 后缀) |
+| 阿根廷本地股票 | `BCBA:{TICKER}` | `BCBA:GGAL`, `BCBA:YPF`, `BCBA:PAMP` |
+| 阿根廷 CEDEAR | `BCBA:{TICKER}` (采用本地代码格式) | `BCBA:AAPL`, `BCBA:KO` |
+| 巴西股票 | `BMFBOVESPA:{TICKER}{NUM}` | `BMFBOVESPA:PETR4`, `BMFBOVESPA:VALE3` |
+| 西班牙股票 | `BME:{TICKER}` | `BME:SAN`, `BME:TEF`, `BME:IBE` |
+| 德国股票 | `XETR:{TICKER}` | `XETR:SAP`, `XETR:VOW3`, `XETR:BMW` |
+| 英国股票 | `LSE:{TICKER}` | `LSE:HSBA`, `LSE:VOD` |
+| 加密货币 | `{EXCHANGE}:{PAIR}` | `BINANCE:BTCUSDT`, `COINBASE:ETHUSD` |
+| 外汇货币对 | `FX:{PAIR}` | `FX:EURUSD`, `OANDA:GBPUSD` |
+| 债券收益率 | `TVC:{CODIGO}` | `TVC:US10Y`, `TVC:DE10Y`, `TVC:AR10Y` |
+| 股指 | `{EXCHANGE}:{INDEX}` | `INDEX:NDX`, `INDEX:DJI`, `INDEX:SPX`, `INDEX:ARG30` |
 
-### URL HTML
+### 拼接 HTML 页面 URL
 
-Convertir `:` por `-`:
+需将冒号 `:` 替换为连字符 `-`：
 
 `NASDAQ:GGAL` → `https://es.tradingview.com/symbols/NASDAQ-GGAL/`
 
 ---
 
-## 5. Decisiones tipicas: que market usar
+## 5. 常见决策：该选用哪个 market
 
-### Buscar la GGAL en NASDAQ
+### 场景 1：查询纳斯达克上市的 GGAL
 
-→ `market=america` o `market=global` con ticker `NASDAQ:GGAL`.
+→ 使用 `market=america` 或 `market=global`，代码指定为 `NASDAQ:GGAL`。
 
 ```bash
 py fetch_tradingview.py quote NASDAQ:GGAL --market global
 ```
 
-### Buscar la GGAL local en BYMA
+### 场景 2：查询在阿根廷 BYMA 本土交易的 GGAL
 
-→ `market=argentina` con ticker `BCBA:GGAL`.
+→ 使用 `market=argentina`，代码指定为 `BCBA:GGAL`。
 
 ```bash
 py fetch_tradingview.py quote BCBA:GGAL --market argentina
 ```
 
-### Buscar TODAS las empresas argentinas en cualquier mercado
+### 场景 3：检索在全球各市场上市的所有阿根廷企业
 
-→ `market=global` + `filter` por country.
+→ 使用 `market=global` + 按 country 过滤。
 
 ```bash
 py fetch_tradingview.py country Argentina --market global --limit 30
 ```
 
-### Buscar TOP cripto por market cap
+### 场景 4：按市值筛选排名前列的加密货币
 
-→ `market=crypto`, sort por `market_cap_basic`.
+→ 使用 `market=crypto`，按 `market_cap_basic` 降序排序。
 
 ```bash
 py fetch_tradingview.py market crypto --limit 20
 ```
 
-### Buscar AAPL en cualquier exchange del mundo
+### 场景 5：在全球所有交易所中查找 AAPL 的上市版本
 
-→ `symbol_search` (devuelve TODAS las variantes).
+→ 使用 `symbol_search`（将返回全球范围内的所有发行变体）。
 
 ```bash
 py fetch_tradingview.py search "AAPL" --type stocks
-# Devuelve NASDAQ:AAPL + variantes en BMV, XETR, LSE, etc.
+# 返回 NASDAQ:AAPL 以及在 BMV、XETR、LSE 等挂牌的各版本
 ```
 
 ---
 
-## 6. Lista completa de exchanges identificados
+## 6. 已识别交易所完整清单
 
-Esta lista fue compilada inspeccionando los `exchange` fields de los
-responses del Scanner para diferentes paises. NO es exhaustiva (TradingView
-soporta 100+ exchanges globales).
+下表整理自对 Scanner 接口中不同国家响应数据的 `exchange` 字段采样。非穷尽列表（TradingView 支持全球 100+ 家交易所）。
 
-### Northamerica
-NYSE, NASDAQ, AMEX, OTC, ARCA, BATS, IEX (US)
-TSX, TSXV, CSE, NEO (Canada)
-BMV (Mexico)
+### 北美洲 (North America)
+- 美国：NYSE, NASDAQ, AMEX, OTC, ARCA, BATS, IEX
+- 加拿大：TSX, TSXV, CSE, NEO
+- 墨西哥：BMV
 
-### Latinoamerica
-BCBA / BYMA (Argentina)
-BMFBOVESPA (Brazil)
-BCS (Chile)
-BVCA (Colombia)
-BVL (Peru)
+### 拉丁美洲 (Latin America)
+- 阿根廷：BCBA / BYMA
+- 巴西：BMFBOVESPA
+- 智利：BCS
+- 哥伦比亚：BVCA
+- 秘鲁：BVL
 
-### Europa
-LSE, LSIN, AQUIS (UK)
-EURONEXT (France, Netherlands, Belgium)
-XETR, FWB (Germany)
-BME (Spain)
-MIL, EUROTLX (Italy)
-SIX (Switzerland)
-WIENER, VIE (Austria)
-WSE (Poland)
-OMXSTO (Sweden)
-OMXHEX (Finland)
-OMXCOP (Denmark)
+### 欧洲 (Europe)
+- 英国：LSE, LSIN, AQUIS
+- 法国/荷兰/比利时：EURONEXT
+- 德国：XETR, FWB
+- 西班牙：BME
+- 意大利：MIL, EUROTLX
+- 瑞士：SIX
+- 奥地利：WIENER, VIE
+- 波兰：WSE
+- 瑞典：OMXSTO
+- 芬兰：OMXHEX
+- 丹麦：OMXCOP
 
-### Asia-Pacifico
-TSE (Japan: Tokyo, alias JPX)
-HKEX (Hong Kong)
-SSE, SZSE (China: Shanghai, Shenzhen)
-TWSE (Taiwan)
-KRX (South Korea)
-NSE, BSE (India)
-ASX (Australia)
-NZX (New Zealand)
-SGX (Singapore)
-SET (Thailand)
-IDX (Indonesia)
-KLSE (Malaysia)
-HOSE (Vietnam)
+### 亚太地区 (Asia-Pacific)
+- 日本：TSE (东京，别名 JPX)
+- 中国香港：HKEX
+- 中国内地：SSE, SZSE (上交所、深交所)
+- 中国台湾：TWSE
+- 韩国：KRX
+- 印度：NSE, BSE
+- 澳大利亚：ASX
+- 新西兰：NZX
+- 新加坡：SGX
+- 泰国：SET
+- 印度尼西亚：IDX
+- 马来西亚：KLSE
+- 越南：HOSE
 
-### Africa / Middle East
-JSE (South Africa)
-EGX (Egypt)
-TASE (Israel)
-DFM (Dubai)
+### 非洲 / 中东 (Africa / Middle East)
+- 南非：JSE
+- 埃及：EGX
+- 以色列：TASE
+- 迪拜：DFM
 
-### Crypto exchanges (mas comunes)
+### 主流加密货币交易所 (Crypto)
 BINANCE, COINBASE, KRAKEN, BITSTAMP, OKX, BYBIT, GEMINI, BITTREX, HUOBI,
 BITMEX, BITFINEX, POLONIEX, KUCOIN
 
-### Forex / Broker feeds
+### 外汇 / 经纪商行情源 (Forex)
 FX, OANDA, FX_IDC, SAXO, FXCM, NASDAQ:FOREX
 
-### Indices / sintéticos
-INDEX (sintetico TradingView)
-TVC (TradingView Calculated)
-DJ (Dow Jones)
-CBOE (CBOE indices)
+### 指数 / 综合衍生源
+- INDEX (TradingView 官方指数)
+- TVC (TradingView Calculated 计算衍生源)
+- DJ (道琼斯 Dow Jones)
+- CBOE (芝加哥期权交易所指数)
 
 ---
 
-## Apendice: descubrir exchanges nuevos
+## 附录：探测与发现新交易所
 
-Para descubrir exchanges no listados:
+若需探测未在列表中的交易所代码：
 
 ```python
-# Listar todos los exchanges distintos para un country
+# 列出某国家包含的所有独立交易所代码
 from fetch_tradingview import screen
 data = screen(
     filter_=[{"left": "country", "operation": "equal", "right": "Japan"}],

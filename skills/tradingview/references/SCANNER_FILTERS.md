@@ -1,27 +1,25 @@
-# Scanner Filters — Sintaxis Completa
+# Scanner 过滤器 (Filters) — 完整语法指南
 
-> Sintaxis del array `filter` en el payload del Scanner. Permite
-> construir queries arbitrarias tipo SQL sobre el universo de ~100k+
-> instrumentos en TradingView.
+> 本文介绍了 Scanner 请求载荷中 `filter` 数组的完整语法规则。支持在 TradingView 涵盖的 ~100k+ 全球品种资产池上，构建类似 SQL 般灵活高效的查询过滤条件。
 
 ---
 
-## Indice
+## 目录
 
-1. [Anatomia del filter](#1-anatomia-del-filter)
-2. [Operaciones soportadas](#2-operaciones-soportadas)
-3. [Multiples filtros — AND implicito](#3-multiples-filtros--and-implicito)
-4. [Sort](#4-sort)
-5. [Pagination via range](#5-pagination-via-range)
-6. [Casos comunes](#6-casos-comunes)
-7. [Casos avanzados](#7-casos-avanzados)
-8. [Errores comunes](#8-errores-comunes)
+1. [过滤器的结构剖析 (Anatomy of Filter)](#1-过滤器的结构剖析-anatomy-of-filter)
+2. [支持的操作符 (Supported Operations)](#2-支持的操作符-supported-operations)
+3. [多条件组合 — 隐式 AND 关系](#3-多条件组合--隐式-and-关系)
+4. [结果排序 (Sort)](#4-结果排序-sort)
+5. [通过 range 进行分页查询](#5-通过-range-进行分页查询)
+6. [常见实战用例](#6-常见实战用例)
+7. [高级进阶用例](#7-高级进阶用例)
+8. [常见错误排查](#8-常见错误排查)
 
 ---
 
-## 1. Anatomia del filter
+## 1. 过滤器的结构剖析 (Anatomy of Filter)
 
-Cada filtro es un dict con 3 keys:
+每个过滤条件都是一个包含 3 个 Key 的字典对象：
 
 ```json
 {
@@ -31,13 +29,13 @@ Cada filtro es un dict con 3 keys:
 }
 ```
 
-| Key | Tipo | Descripcion |
+| 键名 (Key) | 数据类型 | 说明 |
 |-----|------|-------------|
-| `left` | str | Nombre de la columna (debe estar en el catalogo del scanner) |
-| `operation` | str | Operador (ver tabla abajo) |
-| `right` | mixed | Valor o lista de valores (depende del operador) |
+| `left` | str | 字段列名称（必须在 Scanner 支持的字段目录中） |
+| `operation` | str | 操作符名称（详见下方操作符对照表） |
+| `right` | mixed | 对比的值或值列表（具体类型取决于操作符） |
 
-Ejemplo:
+示例：
 
 ```json
 {"left": "sector", "operation": "equal", "right": "Finance"}
@@ -45,68 +43,68 @@ Ejemplo:
 
 ---
 
-## 2. Operaciones soportadas
+## 2. 支持的操作符 (Supported Operations)
 
-### Igualdad / desigualdad
+### 等值 / 不等值 (Equality / Inequality)
 
-| Operacion | Tipo `right` | Significado |
+| 操作符 | `right` 类型 | 含义说明 |
 |-----------|--------------|-------------|
-| `equal` | str/number | `left == right` |
-| `nequal` | str/number | `left != right` |
+| `equal` | str/number | `left == right` (等于) |
+| `nequal` | str/number | `left != right` (不等于) |
 
-### Comparacion numerica
+### 数值大小比较 (Numeric Comparison)
 
-| Operacion | Tipo `right` | Significado |
+| 操作符 | `right` 类型 | 含义说明 |
 |-----------|--------------|-------------|
-| `greater` | number | `left > right` |
-| `egreater` | number | `left >= right` |
-| `less` | number | `left < right` |
-| `eless` | number | `left <= right` |
+| `greater` | number | `left > right` (大于) |
+| `egreater` | number | `left >= right` (大于等于) |
+| `less` | number | `left < right` (小于) |
+| `eless` | number | `left <= right` (小于等于) |
 
-### Rango
+### 数值区间 (Range)
 
-| Operacion | Tipo `right` | Significado |
+| 操作符 | `right` 类型 | 含义说明 |
 |-----------|--------------|-------------|
-| `in_range` | `[min, max]` | `min <= left <= max` |
-| `not_in_range` | `[min, max]` | `left < min OR left > max` |
+| `in_range` | `[min, max]` | `min <= left <= max` (在闭区间内) |
+| `not_in_range` | `[min, max]` | `left < min OR left > max` (在区间外) |
 
-### Set membership
+### 集合成员判定 (Set Membership)
 
-| Operacion | Tipo `right` | Significado |
+| 操作符 | `right` 类型 | 含义说明 |
 |-----------|--------------|-------------|
-| `in_range_strings` | `["a","b","c"]` | `left in [...]` (para strings) |
-| `not_in_range_strings` | `["a","b","c"]` | `left not in [...]` |
+| `in_range_strings` | `["a","b","c"]` | `left in [...]` (字符串集合包含) |
+| `not_in_range_strings` | `["a","b","c"]` | `left not in [...]` (字符串集合不包含) |
 
-### Strings (texto)
+### 字符串模糊匹配 (Strings)
 
-| Operacion | Tipo `right` | Significado |
+| 操作符 | `right` 类型 | 含义说明 |
 |-----------|--------------|-------------|
-| `match` | str | `left LIKE '%right%'` (substring match) |
-| `nmatch` | str | `left NOT LIKE '%right%'` |
+| `match` | str | `left LIKE '%right%'` (包含子串匹配) |
+| `nmatch` | str | `left NOT LIKE '%right%'` (不包含子串) |
 
-### Booleanos / null
+### 布尔值 / 空值判定 (Boolean / Null)
 
-| Operacion | Tipo `right` | Significado |
+| 操作符 | `right` 类型 | 含义说明 |
 |-----------|--------------|-------------|
-| `empty` | (sin right) | `left IS NULL` |
-| `nempty` | (sin right) | `left IS NOT NULL` |
-| `equal` con `right: true/false` | bool | para flags booleanos |
+| `empty` | (无需 right) | `left IS NULL` (字段为空) |
+| `nempty` | (无需 right) | `left IS NOT NULL` (字段非空) |
+| `equal` 配合 `right: true/false` | bool | 用于布尔标志位判定 |
 
-### Cross temporal (raro)
+### 时序跨越交叉 (Cross / Price Action)
 
-| Operacion | Tipo `right` | Significado |
+| 操作符 | `right` 类型 | 含义说明 |
 |-----------|--------------|-------------|
-| `crosses` | column o num | `left cruza right` (price action) |
-| `crosses_above` | column o num | `left cruza right desde abajo` |
-| `crosses_below` | column o num | `left cruza right desde arriba` |
-| `above%` | column o num | `left > right * (1 + pct)` |
-| `below%` | column o num | `left < right * (1 - pct)` |
+| `crosses` | 列名或数值 | `left 穿越 right` (行情穿越) |
+| `crosses_above` | 列名或数值 | `left 从下方上穿 right` (金叉) |
+| `crosses_below` | 列名或数值 | `left 从上方下穿 right` (死叉) |
+| `above%` | 列名或数值 | `left > right * (1 + pct)` |
+| `below%` | 列名或数值 | `left < right * (1 - pct)` |
 
 ---
 
-## 3. Multiples filtros — AND implicito
+## 3. 多条件组合 — 隐式 AND 关系
 
-Pasar varios elementos en `filter` aplica un AND implicito:
+在 `filter` 数组中传入多个条件对象时，会自动以隐式 **AND** 进行与运算组合：
 
 ```json
 {
@@ -118,7 +116,7 @@ Pasar varios elementos en `filter` aplica un AND implicito:
 }
 ```
 
-Equivalente SQL:
+等价的 SQL 语句：
 
 ```sql
 WHERE sector = 'Technology'
@@ -126,25 +124,25 @@ WHERE sector = 'Technology'
   AND country = 'United States'
 ```
 
-### Como hacer OR
+### 如何实现 OR 逻辑
 
-Para `OR` usar **operadores plurales**:
+对于同一字段的 `OR` 条件，请使用**复数集合操作符**：
 
 ```json
 {"left": "sector", "operation": "in_range_strings", "right": ["Finance", "Technology"]}
 ```
 
-Equivalente:
+等价于：
 
 ```sql
 WHERE sector IN ('Finance', 'Technology')
 ```
 
-> No hay `OR` arbitrario entre columnas distintas. Solo `IN` dentro de una columna.
+> 服务端不支持不同字段间的任意 `OR` 语法。仅支持在同一字段内部通过 `IN` 实现多选。
 
 ---
 
-## 4. Sort
+## 4. 结果排序 (Sort)
 
 ```json
 {
@@ -155,36 +153,35 @@ WHERE sector IN ('Finance', 'Technology')
 }
 ```
 
-Ejemplos:
+实战示例：
 
 ```json
-{"sortBy": "market_cap_basic", "sortOrder": "desc"}     // mas grande primero
-{"sortBy": "Perf.YTD", "sortOrder": "desc"}              // mejor performance YTD primero
-{"sortBy": "dividend_yield_recent", "sortOrder": "desc"} // mas dividendo primero
+{"sortBy": "market_cap_basic", "sortOrder": "desc"}     // 市值由大到小排序
+{"sortBy": "Perf.YTD", "sortOrder": "desc"}              // 年初至今表现最优优先
+{"sortBy": "dividend_yield_recent", "sortOrder": "desc"} // 股息率最高优先
 ```
 
-> Solo se puede ordenar por UNA columna. No hay sort por multiples columnas.
+> 单次请求**仅支持按单一字段列排序**，不支持多列组合复合排序。
 
 ---
 
-## 5. Pagination via range
+## 5. 通过 range 进行分页查询
 
-El Scanner NO usa pagination tradicional con `page`. Usa `range: [start, end]`:
+Scanner **不使用**传统的 `page` 页码参数，而是使用切片区间 `range: [start, end]`：
 
 ```json
-"range": [0, 30]    // primeros 30
-"range": [30, 60]   // siguientes 30 (skip primeros 30)
-"range": [0, 5000]  // primeros 5000 (limite practico)
+"range": [0, 30]    // 获取前 30 条记录
+"range": [30, 60]   // 获取第 31 至 60 条记录 (跳过前 30 条)
+"range": [0, 5000]  // 一次性获取前 5000 条 (单次请求的实用上限)
 ```
 
-**Limite empirico:** ~5000 por request sin throttle. Para mas, varios
-requests con offsets.
+**实测经验上限：** 单次请求约 ~5000 条数据不会触发限流或超时。如需获取更多数据，请通过分段递增偏移量分批拉取。
 
 ---
 
-## 6. Casos comunes
+## 6. 常见实战用例
 
-### Top 10 acciones US por market cap
+### 美股市值前 10 大普通股
 
 ```json
 {
@@ -198,7 +195,7 @@ requests con offsets.
 }
 ```
 
-### Empresas argentinas listadas en NASDAQ/NYSE (ADRs)
+### 在 NASDAQ / NYSE 挂牌上市的阿根廷企业 (ADR)
 
 ```json
 {
@@ -211,7 +208,7 @@ requests con offsets.
 }
 ```
 
-### Acciones que reportan earnings esta semana
+### 本周披露财报的股票
 
 ```json
 {
@@ -229,7 +226,7 @@ requests con offsets.
 }
 ```
 
-### Stocks oversold (RSI < 30) con high dividend yield
+### 超卖 (RSI < 30) 且高股息的大盘股
 
 ```json
 {
@@ -244,7 +241,7 @@ requests con offsets.
 }
 ```
 
-### Stocks con STRONG_BUY rating tecnico
+### 技术评级为 STRONG_BUY (强力买入) 的股票
 
 ```json
 {
@@ -258,7 +255,7 @@ requests con offsets.
 }
 ```
 
-### Stocks de un industria especifica con buen ROE
+### 指定行业且净资产收益率 (ROE) 优异的股票
 
 ```json
 {
@@ -272,7 +269,7 @@ requests con offsets.
 }
 ```
 
-### Cryptos por market cap
+### 按市值排名的前 20 大加密货币
 
 ```json
 {
@@ -283,9 +280,9 @@ requests con offsets.
 }
 ```
 
-Con `market: "crypto"` (no `global`).
+注意需配合请求端点 `market: "crypto"`（而非 `global`）。
 
-### Bonos argentinos
+### 阿根廷国债与债券
 
 ```json
 {
@@ -297,13 +294,13 @@ Con `market: "crypto"` (no `global`).
 }
 ```
 
-Con `market: "bonds"`.
+注意需配合请求端点 `market: "bonds"`。
 
 ---
 
-## 7. Casos avanzados
+## 7. 高级进阶用例
 
-### Golden cross detector (SMA50 cruzando SMA200 desde abajo)
+### 金叉探测器 (50 日均线自下而上穿过 200 日均线)
 
 ```json
 {
@@ -318,7 +315,7 @@ Con `market: "bonds"`.
 }
 ```
 
-### Death cross detector
+### 死叉探测器 (50 日均线自上而下跌破 200 日均线)
 
 ```json
 {
@@ -332,7 +329,7 @@ Con `market: "bonds"`.
 }
 ```
 
-### Stocks cerca del 52-week high (within 5%)
+### 接近 52 周新高的股票 (距离高点在 5% 以内)
 
 ```json
 {
@@ -343,9 +340,9 @@ Con `market: "bonds"`.
 }
 ```
 
-> El operador `above%` con `right` como columna compara `close > price_52_week_high * 0.95`.
+> 将操作符 `above%` 的 `right` 指定为列名时，表示对比 `close > price_52_week_high * 0.95`。
 
-### Filtro por cantidad de analistas (consenso fuerte)
+### 覆盖分析师众多且普遍看多的共识标的
 
 ```json
 {
@@ -359,42 +356,37 @@ Con `market: "bonds"`.
 
 ---
 
-## 8. Errores comunes
+## 8. 常见错误排查
 
-### `data: []` con `totalCount: 0`
+### 返回 `data: []` 且 `totalCount: 0`
 
-- **Causa:** filtro demasiado restrictivo, o columna `right` no existe.
-- **Solucion:** sacar filtros uno por uno hasta encontrar el problema.
+- **原因：** 过滤条件过于严苛无匹配品种，或者右侧 `right` 引用的列名不存在。
+- **排查解决：** 逐一移除过滤条件排查，定位引起无匹配的具体条件。
 
 ### HTTP 400 `"Invalid request"`
 
-- **Causa:** sintaxis JSON invalida del filter (ej: falta `"left"`).
-- **Solucion:** validar JSON con `python -c 'import json; json.loads(...)'`.
+- **原因：** 过滤器 JSON 语法有误（例如漏掉了必需的 `"left"` 键）。
+- **排查解决：** 在发送前通过 `python -c 'import json; json.loads(...)'` 校验 JSON 结构合法性。
 
-### Column `xxx` no devuelve nada
+### 指定的列 `xxx` 没有返回数据
 
-- **Causa:** la columna no existe o no se llama asi.
-- **Solucion:** verificar nombre en `SCANNER_COLUMNS.md`. La nomenclatura
-  es estricta — `Recommend.All` ≠ `recommend.all` ≠ `recommend_all`.
+- **原因：** 字段列名不存在或大小写不匹配。
+- **排查解决：** 在 `SCANNER_COLUMNS.md` 中核对准确列名。接口字段名严格区分大小写 —— 例如 `Recommend.All` ≠ `recommend.all` ≠ `recommend_all`。
 
-### Filter por `right: <columna>` no funciona
+### 使用 `right: <列名>` 过滤无效
 
-- **Causa:** algunos operadores solo aceptan numeros, no columnas como
-  argumento derecho. `crosses`, `crosses_above`, `crosses_below`,
-  `above%`, `below%` SI aceptan. Los demas (`equal`, `greater`, etc.)
-  esperan literales.
+- **原因：** 部分操作符仅支持静态常量，不支持将动态列名作为右侧参数。支持动态列名对比的操作符包括：`crosses`, `crosses_above`, `crosses_below`, `above%`, `below%`。其它操作符（如 `equal`, `greater` 等）通常只支持字面量。
 
-### Resultados no ordenados como esperaba
+### 结果排序与预期不符
 
-- **Causa:** `sortOrder` typo (ej: `descending` no existe).
-- **Solucion:** usar `asc` o `desc` exactamente.
+- **原因：** `sortOrder` 出现拼写错误（例如误写成了 `descending`）。
+- **排查解决：** 排序方向只能精确使用 `asc` 或 `desc`。
 
 ---
 
-## Apendice: Operacion equivalente a UNION/SUBQUERY
+## 附录：如何实现类似 UNION / 子查询的效果
 
-El Scanner NO soporta UNION ni subqueries. Para union, hacer multiples
-requests y mergear cliente-side:
+Scanner 服务端**不支持** UNION 联合查询或子查询。若需合并多个不同维度的筛选结果，请发起多次请求并在客户端完成合并：
 
 ```python
 acciones_us = scanner_scan(filter_=[{"left": "country", "operation": "equal", "right": "United States"}], ...)

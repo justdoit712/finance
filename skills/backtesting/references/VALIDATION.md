@@ -1,92 +1,90 @@
-# Suite de Validación — 4 Niveles
+# 回测验证测试套件 — 4 层质量保障体系
 
-El script `validate.py` ejecuta **31 checks** en 4 niveles para asegurar que
-todo el framework de backtesting sea matemáticamente correcto,
-económicamente coherente y resiliente a casos borde.
+`validate.py` 自动化测试脚本包含 4 个层级的 **31+ 项严格检查**，确保整个量化回测框架在数学计算上精确无误、在经济学逻辑上前后自洽，并对各类脏数据和极端边界情况具备高度的抗崩毁鲁棒性。
 
-## Uso Rápido
+## 快速使用
 
 ```bash
-# Suite completa (31 checks)
+# 执行完整验证套件（全部检查项）
 py scripts/validate.py
 
-# Nivel específico
+# 仅执行指定测试层级（例如第 1 层）
 py scripts/validate.py --nivel 1
 ```
 
 ---
 
-## Level 1 — CLI Modes (14 checks)
+## 第 1 层 — CLI 命令行模式验证（Level 1，14 项检查）
 
-Cada comando CLI se invoca con datos reales de mercado y assets built-in.
-Verifica: sin crashes, los outputs contienen resultados válidos.
+基于真实市场行情数据及内置测试数据集调用各项 CLI 命令行工具。
+核心验证目标：全链路调用无报错崩溃，且输出的各项度量指标在真实合理的金融数值区间内。
 
-| # | Check | Fuente de datos | Qué verifica |
+| 序号 | 检查项目 | 数据源 | 验证核心内容 |
 |---|-------|----------------|--------------|
-| 1 | `validate` | `assets/validation_cases.json` | 4 casos sintéticos pasan (constante, normal, drawdown, binomial) |
-| 2 | `run SPY` | `assets/sp500_close.csv` (SPY real, 1993-2026) | CAGR ≈ 8.8%, Sharpe ≈ 0.55, MaxDD ≈ -56% |
-| 3 | `run built-in` | `assets/sp500_returns.csv` | Ratio computation con CSV de retornos 1980-2025 |
-| 4 | `run --benchmark` | momentum + sp500 returns | Benchmark: R², tracking error, payoff summary |
-| 5 | `walkforward SPY` | `assets/sp500_close.csv` | 4 splits expanding-window con IS/OOS |
-| 6 | `walkforward built-in` | `assets/sp500_returns.csv` | Walk-forward sobre dataset de 45 años |
-| 7 | `event` SMA crossover | `assets/sp500_prices.csv` | BacktestEngine genera trades desde OHLCV |
-| 8 | `optmpt` multi-asset | `assets/multi_asset_prices.csv` | Markowitz: SPY + QQQ + GLD + TLT + BTC |
-| 9 | `optmpt` built-in | `assets/sp500_returns.csv` | Optimización con 1 activo (peso ≈ 1.0) |
-| 10 | `marginal` | `assets/sp500_close.csv` | Distribution fitting: Johnson SU best fit |
-| 11 | `marginal` built-in | `assets/sp500_returns.csv` | Mismo con 45 años de retornos |
-| 12 | `forward project` | `assets/sp500_close.csv` | Fan chart projection con Johnson SU |
-| 13 | `forward risk` | `assets/sp500_close.csv` | Forward VaR, cVaR, MaxDD, ruin probability |
-| 14 | `forward stress` | `assets/sp500_close.csv` | Parametric shock sobre SPY |
+| 1 | `validate` | `assets/validation_cases.json` | 4 个基准合成算例全部通过（常数序列、正态分布、连续回撤、二项分布） |
+| 2 | `run SPY` | `assets/sp500_close.csv`（真实 SPY 历史行情，1993-2026） | 验证基准指标：CAGR ≈ 8.8%, Sharpe ≈ 0.55, MaxDD ≈ -56% |
+| 3 | `run built-in` | `assets/sp500_returns.csv` | 基于 1980-2025 年长周期收益率 CSV 校验全部比率计算 |
+| 4 | `run --benchmark` | 动量策略收益率 + 标普500基准收益率 | 校验基准相对指标：$R^2$、跟踪误差（Tracking Error）、超额损益统计 |
+| 5 | `walkforward SPY` | `assets/sp500_close.csv` | 4 次扩展窗口（Expanding-window）切分的 IS/OOS 样本走步验证 |
+| 6 | `walkforward built-in` | `assets/sp500_returns.csv` | 跨度 45 年长时序数据集的走步向前全流程回测 |
+| 7 | `event` 双均线交叉策略 | `assets/sp500_prices.csv` | 基于 OHLCV 开高低收量数据通过 BacktestEngine 引擎生成订单与交易撮合 |
+| 8 | `optmpt` 多资产组合优化 | `assets/multi_asset_prices.csv` | 马科维茨有效前沿优化：SPY + QQQ + GLD + TLT + BTC 多资产权重求解 |
+| 9 | `optmpt` 单资产退化测试 | `assets/sp500_returns.csv` | 单一资产输入时的边界求解（资产最优权重收敛为 1.0） |
+| 10 | `marginal` 边际拟合 | `assets/sp500_close.csv` | 概率分布拟合优度评选：验证 Johnson SU 稳居最优拟合分布 |
+| 11 | `marginal` 内置数据拟合 | `assets/sp500_returns.csv` | 45 年长时序收益率分布的自动化分布拟合与 KS 假设检验 |
+| 12 | `forward project` 路径投射 | `assets/sp500_close.csv` | 基于 Johnson SU 边际分布的前瞻性蒙特卡洛净值扇形图预测 |
+| 13 | `forward risk` 风险度量 | `assets/sp500_close.csv` | 前瞻风险价值 VaR、条件风险价值 cVaR、期望最大回撤与破产概率计算 |
+| 14 | `forward stress` 场景冲击 | `assets/sp500_close.csv` | 对标普 500 指数施加参数化宏观场景冲击压力测试 |
 
 ---
 
-## Level 2 — Mathematical Consistency (7 checks)
+## 第 2 层 — 数学理论自洽性验证（Level 2，7 项检查）
 
-Cada ratio se testea contra propiedades matemáticas conocidas.
+将各指标与理论上的已知数学公理及恒等式进行严格交叉检验。
 
-| # | Check | Método | Propiedad |
+| 序号 | 检查项目 | 测试方法 | 待验证的数学性质 |
 |---|-------|--------|-----------|
-| 15 | **Scale invariance** | Compute all ratios en P y P×1000 | Sharpe, Sortino, MaxDD, CAGR, Kelly, Calmar, Rachev, profit factor, payoff son idénticos |
-| 16 | **Serie constante vol** | 252 días a +1%/día | Vol anualizada ≈ 0 |
-| 17 | **Serie constante MaxDD** | 252 días a +1%/día | Max drawdown ≈ 0 |
-| 18 | **Serie constante Sharpe** | 252 días a +1%/día | Sharpe → ∞ (vol → 0) |
-| 19 | **Walk-forward ruido blanco** | N(0, 1%) returns | Sin crash con datos aleatorios; splits generados |
-| 20 | **DuPont ROE** | Income + balance sintéticos | `roe_check` (producto de 5 factores) ≈ `roe_direct` (NI/Equity) |
-| 21 | **Altman Z** | Income + balance sintéticos | Z = 1.2A + 1.4B + 3.3C + 0.6D + 1.0E verificado |
+| 15 | **尺度不变性（Scale invariance）** | 分别以原始价格序列 $P$ 与放大 1000 倍的序列 $1000 \times P$ 计算全部比率 | 确认 Sharpe、Sortino、MaxDD、CAGR、Kelly、Calmar、Rachev、Profit Factor、Payoff 等比率保持绝对不变 |
+| 16 | **常数收益率序列波动率检验** | 构造连续 252 个交易日单日恒定上涨 +1% 的理论净值曲线 | 策略年化波动率收敛于 $\approx 0$ |
+| 17 | **常数收益率序列最大回撤检验** | 构造连续 252 个交易日单日恒定上涨 +1% 的理论净值曲线 | 策略历史最大回撤为 $0\%$ |
+| 18 | **常数收益率序列夏普比率检验** | 构造连续 252 个交易日单日恒定上涨 +1% 的理论净值曲线 | 夏普比率趋近于正无穷大（$\sigma \to 0$） |
+| 19 | **高斯白噪声走步向前检验** | 输入服从标准正态分布 $\mathcal{N}(0, 1\%)$ 的纯随机收益率序列 | 框架平稳运行不崩溃，各样本外切分窗口正常构建 |
+| 20 | **杜邦五因子分解恒等性检验** | 输入合成利润表与资产负债表数据 | 验证杜邦五因子连乘结果（`roe_check`）严格等于净利润除以净资产（`roe_direct`） |
+| 21 | **Altman Z-Score 公式精确性检验** | 输入合成财务比率指标 | 校验 $Z = 1.2A + 1.4B + 3.3C + 0.6D + 1.0E$ 解析计算完全一致 |
 
 ---
 
-## Level 3 — Edge Cases (8 checks)
+## 第 3 层 — 极端异常与边界条件测试（Level 3，8 项检查）
 
-El framework debe manejar entradas degeneradas sin crash.
+检验框架在遇到各种畸形、缺失或极端异常输入时的容错与鲁棒能力。
 
-| # | Input | Comportamiento esperado |
+| 序号 | 极端异常输入情形 | 框架预期防护行为 |
 |---|-------|------------------------|
-| 22 | 2 filas de datos | Sharpe = NaN, CAGR calculable |
-| 23 | 3 filas de datos | Sin crash |
-| 24 | Precios negativos | NaN propagado silenciosamente, sin crash |
-| 25 | Serie plana (todo 100) | Sharpe = NaN, CAGR = 0 |
-| 26 | NaN en serie de precios | NaNs descartados, sin crash |
-| 27 | Comisión = 100% | CAGR = -100% (costo destruye todo el capital) |
-| 28 | Walk-forward gap = 5000 | 4 splits generados (gap < datos, split 0 skip por IS vacío) |
-| 29 | Markowitz con 1 activo | Weight ≈ 1.0 |
+| 22 | 仅有 2 行极端极简数据 | Sharpe 优雅返回 NaN，CAGR 仍可正常数学计算 |
+| 23 | 仅有 3 行数据 | 内部统计计算不崩溃，优雅处理样本不足 |
+| 24 | 输入包含负价格数据 | 静默输出 NaN，不抛出未经处理的未捕获异常崩溃 |
+| 25 | 价格完全无波动（全为常数 100） | 波动率为 0，Sharpe 安全返回 NaN，CAGR = 0 |
+| 26 | 价格序列中散落分布 NaN 缺失值 | 自动安全清洗剔除 NaN，平稳完成后续比率计算 |
+| 27 | 极端滑点与手续费设为 100% | 复合年化增长率正确返回 CAGR = -100%（本金被手续费完全消耗） |
+| 28 | 走步向前验证设定超大隔离期 gap = 5000 | 安全切分窗口（剔除 IS 样本过小的无效分段），程序不崩溃 |
+| 29 | 输入仅包含 1 个资产的马科维茨优化 | 求解器不退化报错，直接输出最优资产配置权重为 1.0 |
 
 ---
 
-## Level 4 — Regression (4 checks)
+## 第 4 层 — 防劣化回归测试（Level 4，4 项检查）
 
-Validación post-fixes para asegurar que nada está roto.
+在代码重构或缺陷修复后执行，确保核心功能和算法逻辑未发生任何意外破坏。
 
-| # | Check | Método |
+| 序号 | 检查项目 | 测试与验证方法 |
 |---|-------|--------|
-| 30 | `pytest test_ratios.py` | Todos los 18 tests unitarios pasan |
-| 31 | Markowitz reproducibilidad | Misma seed=42 → mismo portfolio óptimo (verifica RNG aislado) |
-| 32 | Parameter sweep | Variación de parámetros produce resultados distintos (estrategia evaluada correctamente) |
-| 33 | Monte Carlo search | Combinaciones aleatorias de parámetros producen resultados distintos |
+| 30 | `pytest test_ratios.py` | 运行单元测试套件，确保 18 项核心指标测试全部绿灯通过 |
+| 31 | 马科维茨优化数值可复现性 | 固定随机种子 `seed=42` 时，两次独立优化求解得到完全一致的最优投资组合权重（验证随机数发生器 RNG 严格隔离） |
+| 32 | 参数网格扫描敏感性验证 | 变动策略关键输入参数时，能够准确输出差异化的策略回测绩效结果（证实参数确实生效而非运行了虚假写死代码） |
+| 33 | 蒙特卡洛参数空间搜索验证 | 在随机参数组合采样下，各轮次评估结果具有真实分布（避免参数绑定失效） |
 
 ---
 
-## Ejemplo de salida
+## 测试输出终端示例
 
 ```
    ▐▛σ σ▜▌     Finance skills
@@ -109,16 +107,16 @@ Validación post-fixes para asegurar que nada está roto.
 
 ---
 
-## Mantenimiento
+## 开发与维护指南
 
-Al agregar una nueva feature o corregir un bug:
+当向框架中新增指标、新策略或修复 Bug 时，必须严格遵循以下流程：
 
-1. Agregar un check en el nivel correspondiente de `validate.py`
-2. Verificar que pase con `py scripts/validate.py --nivel N`
-3. Correr la suite completa para confirmar que no hay regresiones
+1. 在 `validate.py` 脚本对应的测试层级中编写新增的断言检查项。
+2. 运行单层测试验证其执行情况：`py scripts/validate.py --nivel N`。
+3. 运行全量验证套件确保 31+ 项检查全绿，杜绝任何历史功能回归劣化。
 
-La estructura de 4 niveles asegura que:
-- Los comandos CLI no crashean (**Level 1**)
-- La matemática es correcta (**Level 2**)
-- Los casos borde se manejan (**Level 3**)
-- La funcionalidad existente se preserva (**Level 4**)
+这 4 个递进层级构成了量化回测工业级部署的安全基石：
+- 确保命令行工具健壮稳定（**第 1 层**）
+- 确保金融数学计算理论自洽（**第 2 层**）
+- 确保脏数据与边界输入容错优雅（**第 3 层**）
+- 确保持续迭代中历史能力不退化（**第 4 层**）

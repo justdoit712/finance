@@ -1,115 +1,98 @@
-# Teoría de Portafolios (MPT)
+# 现代投资组合理论（MPT）
 
-## Supuestos Básicos
+## 核心基本假设
 
-1. Dado un nivel de retorno buscado, los inversores prefieren el portafolio
-   menos volátil (la volatilidad como riesgo).
-2. Dada una aversión al riesgo (volatilidad tolerada), los inversores buscan
-   el portafolio de máximo retorno para ese nivel de volatilidad.
-3. El riesgo es el costo a pagar por el retorno buscado: no existe retorno
-   sin riesgo (o a largo plazo es despreciable).
+1. **风险厌恶假定**：在相同的期望收益率水平下，理性投资者必然偏好方差（波动率）最小的投资组合（以收益波动率作为风险的代名词）。
+2. **非满足性（追求收益最大化）**：在相同的可承受风险水平（波动率）下，投资者必然追求期望收益率最大化的投资组合。
+3. **高风险高期望补偿**：风险是追求超额收益必须承担的对价——在有效市场中，长期来看不存在完全脱离风险的超额回报。
 
-## Fórmulas Base
+## 基础数学公式
 
-### Portafolio de 2 activos
+### 2 资产投资组合
 
-**Retorno esperado:**
+**组合期望收益率：**
 ```
-E(Rp) = w_i * E(Ri) + w_j * E(Rj)
+E(Rp) = w_i · E(Ri) + w_j · E(Rj)
 ```
 
-**Varianza:**
+**组合方差：**
 ```
-V(Rp) = w_i^2 * sigma_i^2 + w_j^2 * sigma_j^2 + 2 * w_i * w_j * rho_ij * sigma_i * sigma_j
-```
-
-### Portafolio de N activos (notación matricial)
-
-**Retorno esperado:**
-```
-E(Rp) = w^T * mu
+V(Rp) = w_i² · σ_i² + w_j² · σ_j² + 2 · w_i · w_j · ρ_ij · σ_i · σ_j
 ```
 
-**Varianza:**
+### N 资产投资组合（矩阵与线性代数记法）
+
+**组合期望收益率：**
 ```
-V(Rp) = w^T * Sigma * w
-```
-
-## Markowitz (1952)
-
-Harry Markowitz plantea que un inversor racional construye su portafolio
-maximizando el retorno para una varianza asumida, moviéndose dentro de
-curvas de indiferencia e isovarianza.
-
-### Frontera Eficiente
-
-Conjunto de portafolios que ofrecen el máximo retorno para cada nivel de
-riesgo (o mínimo riesgo para cada nivel de retorno).
-
-### Limitaciones de Markowitz
-
-1. **Inestabilidad**: las soluciones óptimas son muy sensibles al ruido
-   (típico de mercados financieros).
-2. **Retornos desconocidos**: no conocemos los retornos ni varianzas a
-   posteriori.
-3. **Supuestos fuertes**: normalidad de retornos, homocedasticidad.
-
-### Soluciones a las limitaciones
-
-- **Clustering** → NCO, HRP, HERC (reducir ruido promediando errores dentro
-  de clusters de activos similares).
-- **Black-Litterman** → Incorporar visión personal con incertidumbre.
-- **Shrinkage** → Ledoit-Wolf, OAS para covarianzas más robustas.
-
-## CAPM
-
-```
-E[Ri] = Rf + beta_i * (E[Rm] - Rf)
+E(Rp) = wᵀ · μ
 ```
 
-Relaciona el rendimiento esperado de un activo con su riesgo sistemático
-(beta) respecto al mercado.
+**组合方差：**
+```
+V(Rp) = wᵀ · Σ · w
+```
+其中 $w$ 为归一化资产权重列向量（$\sum w_i = 1$），$\mu$ 为各资产期望收益率列向量，$\Sigma$ 为资产收益率的协方差矩阵。
 
-## Fama-French (3 factores)
+## 马科维茨（Markowitz, 1952）资产选择模型
 
-Agrega al CAPM los factores:
-- **SMB** (Small Minus Big): tamaño
-- **HML** (High Minus Low): valor libros/precio
+哈里·马科维茨（Harry Markowitz）在 1952 年奠定了现代资产组合理论的基础。他指出理性投资者应通过在给定预期方差约束下最大化期望收益（或给定预期收益下最小化方差），在风险收益无差异曲线与投资可行集的切点处确立最优头寸。
 
-## Capital Market Line (CML)
+### 有效前沿（Efficient Frontier）
 
-Recta tangente desde la tasa libre de riesgo (Rf) al portafolio óptimo
-sobre la frontera eficiente. El portafolio tangente maximiza el Sharpe ratio.
+在风险资产构成的可行集合中，由所有“在特定风险水平下提供最高预期收益，或在特定预期收益下风险最小”的最优投资组合所描绘出的凸状上边界曲线。
+
+### 马科维茨均值-方差优化的实战局限性
+
+1. **数值求解的极度不稳定性**：由于经验样本协方差矩阵往往条件数极高（近奇异），微小的样本估计误差会被矩阵求逆大幅放大，导致输出的配置权重在极端正负之间剧烈跳变（被业界诟病为“误差最大化器”）。
+2. **未来参数未知的先验困境**：投资决策面对的是未来的收益率分布与协方差，而使用历史样本均值作为未来预期收益率预测的信噪比极低。
+3. **苛刻的正态性假设**：模型假定资产收益率服从高斯正态分布且方差齐性（Homoscedasticity），完全无法涵盖金融市场普遍存在的厚尾尖峰与偏斜黑天鹅事件。
+
+### 现代量化演进与解决方案
+
+- **机器学习层次聚类法** → **NCO（嵌套聚类优化）、HRP（层次风险平价）、HERC**：利用图论聚类将高共线性资产分组，在簇内相互抵消微观高斯白噪声。
+- **贝叶斯先验融合** → **黑-莱特曼（Black-Litterman）模型**：以市场整体市值均衡作为中立先验基准，平滑融入带有置信度参数的主观 Alpha 观点。
+- **协方差收缩技术（Covariance Shrinkage）** → **Ledoit-Wolf 与 OAS 收缩**：通过将样本协方差向结构化目标（如对角阵或单因子阵）线性收缩，保证矩阵正定且大幅降低条件数。
+
+## CAPM 资本资产定价模型
 
 ```
-E(Rp) = Rf + Sharpe_t * sigma_p
+E[Ri] = Rf + β_i · (E[Rm] − Rf)
 ```
 
-### Leverage y Deleverage sobre la CML
+阐述了任意单一风险资产的预期均衡收益率与其承担的不可分散系统性市场风险（$\beta_i$）之间的线性对应关系。
 
-El portafolio tangente (máximo Sharpe) define la pendiente de la CML.
-Cualquier punto sobre esta recta se obtiene combinando linealmente el
-activo libre de riesgo (Rf) con el portafolio tangente — sin cambiar el
-Sharpe ratio.
+## 法玛-弗兰奇（Fama-French）三因子模型
 
-Sea `w` el peso asignado al portafolio tangente (y `1-w` al activo libre
-de riesgo):
+在 CAPM 市场基准因子（Market Factor）的基础上，进一步引入了两个重要的系统性风险超额因子：
+- **SMB（Small Minus Big，规模因子）**：小市值股票相对于大市值股票的长期超额溢价。
+- **HML（High Minus Low，价值因子）**：高账面市值比（价值股）相对于低账面市值比（成长股）的超额溢价。
+
+## 资本市场线（Capital Market Line, CML）
+
+自纵轴上的无风险利率点（$R_f$）出发，与风险资产有效前沿相切的射线。该切点所对应的组合被称为**切点投资组合（Tangency Portfolio）**，在全市场风险资产中拥有绝对最高的夏普比率（Sharpe Ratio）。
 
 ```
-E(Rp) = (1-w) * Rf + w * E(Rt) = Rf + w * (E(Rt) - Rf)
-sigma_p = w * sigma_t
-Sharpe_p = (E(Rp) - Rf) / sigma_p = Sharpe_t
+E(Rp) = Rf + Sharpe_t · σ_p
 ```
 
-Casos según `w`:
+### 基于资本市场线（CML）的杠杆与去杠杆操作
 
-| w | Qué significa | Efecto |
+根据托宾（Tobin）的两基金分离定理（Two-Fund Separation Theorem），切点组合决定了风险资产之间的相对配比最佳结构。投资者无需改变切点内部各股票的权重，仅需通过线性调整**无风险资产与切点组合之间的资金分配比例**，即可沿着资本市场线获得任意风险档位下的最优收益，且**夏普比率完全恒定不变**。
+
+设 $w$ 为分配给切点投资组合的资金权重，其余 $(1 - w)$ 配置于无风险资产（或以无风险利率借贷）：
+
+```
+E(Rp) = (1 − w) · Rf + w · E(Rt) = Rf + w · (E(Rt) − Rf)
+σ_p = w · σ_t
+Sharpe_p = (E(Rp) − Rf) / σ_p = Sharpe_t
+```
+
+资金权重 $w$ 对应的金融实操含义：
+
+| 权重取值区间 | 实务金融含义 | 组合最终特征与效果 |
 |---|---------------|--------|
-| 0 < w < 1 | **Deleverage**: parte en Rf, parte en tangencia | Menor riesgo y retorno, mismo Sharpe |
-| w = 1 | Portafolio tangente puro | Riesgo y retorno del tangente |
-| w > 1 | **Leverage**: pide prestado a Rf para invertir más del 100% en tangencia | Mayor riesgo y retorno, mismo Sharpe |
+| $0 < w < 1$ | **去杠杆配置（Deleverage）**：一部分资金买入切点组合，其余资金存入无风险资产（如短期国债） | 降低总组合波动率与预期收益，维持最高夏普比率不变 |
+| $w = 1.0$ | **纯切点组合配置** | 100% 仓位持有风险切点组合，获得其标准收益与风险 |
+| $w > 1.0$ | **杠杆借贷配置（Leverage）**：以无风险利率借入资金，以超额本金放大持有切点组合（如 $w=1.5$ 借入 50% 资金） | 承担更高的绝对风险博取更高绝对回报，维持最高夏普比率不变 |
 
-Esto es conceptualmente distinto a moverse sobre la frontera eficiente
-(solo activos riesgosos, sin Rf). La CML domina a la frontera eficiente
-porque para cualquier nivel de riesgo ofrece mayor retorno (o menor riesgo
-para el mismo retorno).
+**理论主导优势：** 资本市场线（CML）在数学上严格**占优（Dominates）**纯风险资产构成的马科维茨有效前沿：对于任意给定的目标波动率，CML 线上提供的预期收益率均严格高于单纯在有效前沿上寻找的配置点；反之，达到相同的目标期望收益率，CML 组合承担的波动率显著更低。

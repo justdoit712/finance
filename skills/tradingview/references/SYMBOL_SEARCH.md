@@ -1,47 +1,46 @@
-# Symbol Search v3 — Referencia Detallada
+# Symbol Search v3 (标的检索) — 详细参考指南
 
-> Endpoint: `GET https://symbol-search.tradingview.com/symbol_search/v3/?text={query}`
+> 接口端点：`GET https://symbol-search.tradingview.com/symbol_search/v3/?text={query}`
 >
-> Buscador global de TradingView. Devuelve los matches con **ISIN, CUSIP,
-> CIK, currency, exchange, logoid, descripcion**. Sin auth.
+> TradingView 全球标的搜索引擎。返回匹配项的 **ISIN、CUSIP、CIK、计价货币、挂牌交易所、Logo ID、详细描述** 等核心字段。免认证鉴权。
 
 ---
 
-## Indice
+## 目录
 
-1. [Endpoint y parametros](#1-endpoint-y-parametros)
-2. [Schema del response](#2-schema-del-response)
-3. [Campos detallados](#3-campos-detallados)
-4. [search_type — universos disponibles](#4-search_type--universos-disponibles)
-5. [Filtros adicionales](#5-filtros-adicionales)
-6. [Variantes del endpoint](#6-variantes-del-endpoint)
-7. [Casos de uso comunes](#7-casos-de-uso-comunes)
-8. [Limitaciones](#8-limitaciones)
+1. [接口端点与请求参数](#1-接口端点与请求参数)
+2. [响应数据 Schema](#2-响应数据-schema)
+3. [字段详细说明](#3-字段详细说明)
+4. [search_type — 可选资产类别](#4-search_type--可选资产类别)
+5. [附加过滤参数](#5-附加过滤参数)
+6. [接口端点变体](#6-接口端点变体)
+7. [常见实战用例](#7-常见实战用例)
+8. [局限性与已知限制](#8-局限性与已知限制)
 
 ---
 
-## 1. Endpoint y parametros
+## 1. 接口端点与请求参数
 
-### URL
+### URL 地址
 
 ```
 GET https://symbol-search.tradingview.com/symbol_search/v3/
 ```
 
-### Query params
+### Query 查询参数
 
-| Param | Tipo | Descripcion | Default |
+| 参数 | 类型 | 说明 | 默认值 |
 |-------|------|-------------|---------|
-| `text` | str | Texto a buscar (ticker, ISIN, CUSIP, nombre empresa) | (requerido) |
-| `search_type` | str | Tipo de instrumento (ver seccion 4) | sin filtro (todos) |
-| `exchange` | str | Filtrar por exchange (NASDAQ, NYSE, BCBA, BME, etc.) | sin filtro |
-| `lang` | str | Idioma del response (en, es) | en |
-| `domain` | str | `production` (siempre) | production |
-| `hl` | int | 1 = `<em>` highlights en `description` | 1 |
+| `text` | str | 检索关键词（标的代码、ISIN、CUSIP、企业名称） | (必填) |
+| `search_type` | str | 标的资产类别（详见第 4 节） | 无过滤 (全类别) |
+| `exchange` | str | 按交易所过滤 (NASDAQ, NYSE, BCBA, BME 等) | 无过滤 |
+| `lang` | str | 响应语言代码 (en, es) | en |
+| `domain` | str | 运行环境标识 (`production`) | production |
+| `hl` | int | 设为 1 则在 `description` 中高亮匹配词 (`<em>`) | 1 |
 
-### Headers
+### 请求头 (Headers)
 
-Identicos a los de scanner:
+与 Scanner 接口保持一致：
 
 ```python
 HEADERS = {
@@ -54,7 +53,7 @@ HEADERS = {
 
 ---
 
-## 2. Schema del response
+## 2. 响应数据 Schema
 
 ```json
 {
@@ -82,163 +81,162 @@ HEADERS = {
 }
 ```
 
-| Campo top-level | Tipo | Descripcion |
+| 顶层字段 | 类型 | 说明 |
 |-----------------|------|-------------|
-| `symbols_remaining` | int | Items adicionales no retornados (0 si todos cabieron) |
-| `symbols` | list | Array de matches |
+| `symbols_remaining` | int | 未在本次返回的剩余匹配项数（为 0 表示已全部返回） |
+| `symbols` | list | 匹配结果对象数组 |
 
 ---
 
-## 3. Campos detallados
+## 3. 字段详细说明
 
-### Identificadores estandar
+### 基础标识字段
 
-| Campo | Descripcion |
+| 字段 | 说明 |
 |-------|-------------|
-| `symbol` | Ticker corto (ej: `GGAL`). NO incluye exchange. Para usar en Scanner concatenar `exchange:symbol`. |
-| `description` | Nombre completo. Con `hl=1` viene con `<em>` en los matches. |
-| `type` | `stock`, `dr` (ADR/CEDEAR), `etf`, `fund`, `crypto`, `forex`, `bond`, `index`, `future`, `option` |
-| `exchange` | Exchange code |
-| `currency_code` | Moneda de cotizacion ISO 4217 (USD, EUR, ARS, BRL, etc.) |
+| `symbol` | 简短代码 (例如: `GGAL`)，不包含交易所前缀。若需在 Scanner 中使用，请拼装为 `exchange:symbol`。 |
+| `description` | 标的完整名称。当 `hl=1` 时匹配的部分会被 `<em>` 标签包裹。 |
+| `type` | 资产类别: `stock`, `dr` (ADR/CEDEAR), `etf`, `fund`, `crypto`, `forex`, `bond`, `index`, `future`, `option` |
+| `exchange` | 挂牌交易所代码 |
+| `currency_code` | ISO 4217 计价货币代码 (USD, EUR, ARS, BRL 等) |
 
-### Identificadores universales (gold!)
+### 全球通用唯一标识符 (核心价值字段!)
 
-| Campo | Descripcion |
+| 字段 | 说明 |
 |-------|-------------|
-| `isin` | **ISIN** (International Securities Identification Number). Estandar global 12 chars. Ej: `US3999091008` |
-| `cusip` | **CUSIP** (US standard 9 chars). Ej: `399909100` |
-| `cik_code` | **CIK code** (SEC US filer ID, 10 digits). Ej: `0001114700`. Usar para joinear con SEC EDGAR. |
-| `found_by_isin` | true si el match vino por ISIN match (no por nombre) |
-| `found_by_cusip` | true si el match vino por CUSIP match |
+| `isin` | **ISIN 国际证券识别码** (International Securities Identification Number)，12 位全球通用标准代码。例如: `US3999091008` |
+| `cusip` | **CUSIP 代码** (美加标准 9 位代码)。例如: `399909100` |
+| `cik_code` | **CIK 代码** (美国 SEC 报备机构代码，10 位数字)。例如: `0001114700`，可直接关联对接 SEC EDGAR 数据库。 |
+| `found_by_isin` | 若通过 ISIN 匹配成功则为 `true` (非名称匹配) |
+| `found_by_cusip` | 若通过 CUSIP 匹配成功则为 `true` |
 
-> Estos 3 codes son ORO para arbitrar datos entre fuentes:
-> - **ISIN**: estandar global, identifica unicamente una emision.
-> - **CUSIP**: para US, sub-identifier de ISIN.
-> - **CIK**: para joinear con SEC EDGAR (10-K, 10-Q, 8-K filings).
+> 这 3 个代码是进行跨数据源套利与数据对齐的核心桥梁：
+> - **ISIN**：全球统一标准，唯一确定某只发行证券。
+> - **CUSIP**：北美通用证券标识，属于 ISIN 的核心构成部分。
+> - **CIK**：用于无缝对接 SEC EDGAR（获取 10-K、10-Q、8-K 披露财报）。
 
-### Logos
+### 图标与 Logo
 
-| Campo | Uso |
+| 字段 | 说明 |
 |-------|-----|
-| `logoid` | ID del logo. URL completa: `https://s3-symbol-logo.tradingview.com/{logoid}--big.svg` |
-| `logo` | dict con `style` (`single` o `dual`) y `logoid` |
-| `currency-logoid` | ID del logo de la moneda (ej: `country/US`) |
-| `source_logoid` | ID del logo del exchange (ej: `source/NASDAQ`) |
+| `logoid` | 品牌 Logo ID。完整图片链接为: `https://s3-symbol-logo.tradingview.com/{logoid}--big.svg` |
+| `logo` | 字典结构，包含 `style` (`single` 单图标或 `dual` 双图标) 与 `logoid` |
+| `currency-logoid` | 货币图标 ID (例如: `country/US`) |
+| `source_logoid` | 交易所图标 ID (例如: `source/NASDAQ`) |
 
-### Fuente
+### 数据来源
 
-| Campo | Descripcion |
+| 字段 | 说明 |
 |-------|-------------|
-| `provider_id` | Provider de los datos (`ice`, `nasdaq`, `cboe`, etc.) |
-| `source2` | `{id, name}` del exchange |
+| `provider_id` | 行情数据提供商 (`ice`, `nasdaq`, `cboe` 等) |
+| `source2` | 交易所信息字典 `{id, name}` |
 
 ---
 
-## 4. search_type — universos disponibles
+## 4. search_type — 可选资产类别
 
-| Tipo | Descripcion | Ejemplo |
+| 类型取值 | 涵盖范围 | 查询示例 |
 |------|-------------|---------|
-| `stocks` | Acciones + ADRs + CEDEARs + fondos cerrados | `text=GGAL` |
-| `funds` | Mutual funds + ETFs | `text=SPY` |
-| `futures` | Futuros | `text=ES1!` |
-| `forex` | Forex pairs | `text=EURUSD` |
-| `crypto` | Cryptocurrencies | `text=BTC` |
-| `indices` | Indices | `text=SPX` |
-| `bonds` | Bonos | `text=US10Y` |
-| `economic` | Indicadores economicos | `text=CPI` |
-| `options` | Opciones | `text=AAPL` |
+| `stocks` | 普通股 + ADR + CEDEAR + 封闭式基金 | `text=GGAL` |
+| `funds` | 共同基金 (Mutual funds) + ETF 基金 | `text=SPY` |
+| `futures` | 期货合约 | `text=ES1!` |
+| `forex` | 外汇货币对 | `text=EURUSD` |
+| `crypto` | 加密货币 | `text=BTC` |
+| `indices` | 股票指数 | `text=SPX` |
+| `bonds` | 债券 | `text=US10Y` |
+| `economic` | 宏观经济指标 | `text=CPI` |
+| `options` | 期权合约 | `text=AAPL` |
 
-> Sin `search_type` devuelve TODOS los tipos. Util para descubrir si un
-> ticker existe en multiples universos.
+> 不指定 `search_type` 时将检索**全量资产类别**。适合用于探测某个 Ticker 在多个市场/资产池中是否存在重名。
 
-### Que NO funciona
+### 无效的 search_type 取值
 
-- `search_type=etf` (los ETFs estan dentro de `funds`)
-- `search_type=cedear` (los CEDEARs estan en `stocks` con `type=dr`)
+- `search_type=etf`（ETF 包含在 `funds` 分类下）
+- `search_type=cedear`（CEDEAR 归属于 `stocks`，通过 `type=dr` 标识）
 
 ---
 
-## 5. Filtros adicionales
+## 5. 附加过滤参数
 
-### Por exchange
+### 按挂牌交易所过滤
 
 ```
 GET /symbol_search/v3/?text=Apple&exchange=NASDAQ
 ```
 
-→ Devuelve solo matches en NASDAQ.
+→ 仅返回在 NASDAQ 上市的匹配项。
 
-### Por idioma
+### 按语言本地化
 
 ```
 GET /symbol_search/v3/?text=GGAL&lang=es
 ```
 
-→ Devuelve descripciones traducidas cuando estan disponibles.
+→ 当存在对应语言翻译时，返回本地化的描述信息。
 
-### Highlight matches
+### 关键词高亮 (Highlight)
 
 ```
 GET /symbol_search/v3/?text=Apple&hl=1
 ```
 
-→ `description` viene con `<em>Apple</em>` envolviendo el match.
+→ `description` 字段中的匹配部分会被 `<em>Apple</em>` 标签包裹。
 
-Con `hl=0` viene texto plano.
+若传入 `hl=0` 则返回纯文本，不包含 HTML 标签。
 
 ---
 
-## 6. Variantes del endpoint
+## 6. 接口端点变体
 
-| Path | Status | Tipo de response |
+| 接口路径 | 状态 | 响应格式 |
 |------|--------|------------------|
-| `/symbol_search/v3/` | ✅ 200 | dict `{symbols_remaining, symbols[]}` |
-| `/symbol_search/` | ✅ 200 | list `[...]` directo (formato antiguo) |
-| `/local_search/v3/` | ✅ 200 | Identico a `/symbol_search/v3/` |
-| `/symbol_search/v2/` | ❓ | (no testeado) |
+| `/symbol_search/v3/` | ✅ 200 | 字典对象 `{symbols_remaining, symbols[]}` (推荐) |
+| `/symbol_search/` | ✅ 200 | 直接返回列表 `[...]` (旧版格式) |
+| `/local_search/v3/` | ✅ 200 | 与 `/symbol_search/v3/` 完全相同 |
+| `/symbol_search/v2/` | ❓ | 未测试 |
 
-**Recomendacion:** usar **`/v3/`** — formato estructurado con `symbols_remaining`.
+**最佳实践建议：** 始终使用 **`/v3/`** —— 返回规范的结构化字典，包含 `symbols_remaining` 计数。
 
 ---
 
-## 7. Casos de uso comunes
+## 7. 常见实战用例
 
-### 1. Resolver simbolo desde ticker corto
+### 1. 通过简短 Ticker 解析标的
 
 ```python
 results = symbol_search("GGAL", search_type="stocks")
-# Devuelve hasta 50 matches con GGAL en distintos exchanges
+# 返回不同交易所挂牌的最多 50 个 GGAL 匹配项
 ```
 
-### 2. Buscar por nombre de empresa
+### 2. 通过企业名称检索
 
 ```python
 results = symbol_search("Apple", search_type="stocks")
-# Primer match: NASDAQ:AAPL
+# 首个匹配项即为 NASDAQ:AAPL
 ```
 
-### 3. Resolver por ISIN
+### 3. 通过 ISIN 代码反查
 
 ```python
 results = symbol_search("US3999091008")
-# El response tendra found_by_isin: true para el match correcto
+# 匹配结果对象的 found_by_isin 将为 true
 ```
 
-### 4. Resolver por CUSIP
+### 4. 通过 CUSIP 代码反查
 
 ```python
 results = symbol_search("399909100")
-# found_by_cusip: true
+# found_by_cusip 将为 true
 ```
 
-### 5. Filtrar por exchange especifico
+### 5. 限定特定交易所检索
 
 ```python
 results = symbol_search("AAPL", exchange="NASDAQ")
-# Solo NASDAQ:AAPL (no XETR:APC, BMV:AAPL, etc.)
+# 仅返回 NASDAQ:AAPL (排除 XETR:APC, BMV:AAPL 等)
 ```
 
-### 6. Listar todos los exchanges donde cotiza un ticker
+### 6. 列出某标的在全球挂牌的所有交易所
 
 ```python
 results = symbol_search("AAPL", search_type="stocks")
@@ -246,34 +244,34 @@ exchanges = [s["exchange"] for s in results["symbols"]]
 # ['NASDAQ', 'XETR', 'BMV', 'LSE', 'MEX', ...]
 ```
 
-### 7. Buscar criptos por ticker
+### 7. 检索加密货币标的
 
 ```python
 results = symbol_search("BTC", search_type="crypto")
-# Devuelve BTCUSD, BTCEUR, BTCUSDT en multiples exchanges
+# 返回各交易所的 BTCUSD, BTCEUR, BTCUSDT 等交易对
 ```
 
-### 8. Joinear con SEC EDGAR via CIK
+### 8. 通过 CIK 与 SEC EDGAR 数据库对接
 
 ```python
 ggal = symbol_search("GGAL", search_type="stocks")["symbols"][0]
 cik = ggal["cik_code"]
-# Ahora usar SEC EDGAR API:
+# 随后可调用 SEC EDGAR API：
 # https://data.sec.gov/submissions/CIK{cik}.json
 ```
 
-### 9. Pipeline search → quote
+### 9. 搜索 → 报价流水线协同
 
 ```python
-# 1. Buscar
+# 1. 搜索标的
 matches = symbol_search("Galicia", search_type="stocks")
 nasdaq_match = next((s for s in matches["symbols"] if s["exchange"] == "NASDAQ"), None)
-# 2. Quote
+# 2. 查询报价
 ticker = f"{nasdaq_match['exchange']}:{nasdaq_match['symbol']}"
 quote_data = quote(ticker)
 ```
 
-### 10. Verificar si un ticker existe
+### 10. 验证标的代码是否存在
 
 ```python
 results = symbol_search("XYZQ", search_type="stocks")
@@ -282,28 +280,16 @@ exists = len(results["symbols"]) > 0
 
 ---
 
-## 8. Limitaciones
+## 8. 局限性与已知限制
 
-1. **Maximo ~50 resultados por request** (segun `symbols_remaining`).
-   No hay paginacion. Para mas, hacer queries mas especificas con
-   `exchange` filter.
-
-2. **search_type debe matchear el universo real**:
-   - `text=BTCUSD` con `search_type=forex` → 0 results (es crypto).
-   - `text=EURUSD` con `search_type=crypto` → 0 results (es forex).
-
-3. **No hay filtro por country**: para filtrar por country usar el
-   Scanner con `filter: country = X`.
-
-4. **No hay filtro por type secundario** (CEDEAR vs ADR): ambos son
-   `type=dr`. Distinguir por exchange (`BCBA:*` vs `NASDAQ:*`).
-
-5. **Tickers locales no-latinos** (japoneses, chinos, hebreos) pueden
-   tener problemas de display en consolas que no soportan UTF-8 completo.
-   Salvar a archivo con `ensure_ascii=False` para verlos correctamente.
-
-6. **No hay endpoint de "lista todos los tickers de un exchange"** via
-   symbol_search. Para eso usar el Scanner:
+1. **单次请求最多返回 ~50 个匹配结果**（受 `symbols_remaining` 控制），该端点不支持分页。如需缩小范围，请配合 `exchange` 等过滤参数进行精确检索。
+2. **`search_type` 必须与真实资产分类严格匹配**：
+   - 检索 `text=BTCUSD` 配合 `search_type=forex` → 返回 0 条结果（属于 crypto 分类）。
+   - 检索 `text=EURUSD` 配合 `search_type=crypto` → 返回 0 条结果（属于 forex 分类）。
+3. **不支持直接按国家 (Country) 过滤**：若需按国家筛选，请使用 Scanner API 配合 `filter: country = X`。
+4. **二级资产类型无独立过滤项**（如区分 CEDEAR 与 ADR）：两者 `type` 均为 `dr`。需通过挂牌交易所区分（`BCBA:*` 对比 `NASDAQ:*`）。
+5. **非拉丁字符标的代码**（如日文、中文、希伯来文等）在部分非 UTF-8 控制台中可能出现字符编码异常。保存到文件时请务必使用 `ensure_ascii=False`。
+6. **未提供“列出指定交易所所有标的”的专用端点**：如需获取某交易所的全部品种清单，应使用 Scanner API：
 
 ```python
 all_nasdaq = scanner_scan(
@@ -316,13 +302,13 @@ all_nasdaq = scanner_scan(
 
 ---
 
-## Apendice: integracion con otros skills del repo
+## 附录：与其他金融 Skill 的协同集成
 
-| Skill | Como integrar via SymbolSearch |
+| 关联 Skill | 如何通过 SymbolSearch 实现跨库协同 |
 |-------|--------------------------------|
-| **sec-data** | Obtener `cik_code` → fetch 10-K/10-Q de SEC EDGAR |
-| **finviz** | Obtener `symbol` US → query Finviz por ticker |
-| **macrotrends** | Obtener nombre exacto + ticker → URL Macrotrends |
-| **yahoo-finance** | Obtener ticker + exchange → Yahoo Finance |
-| **byma** | Obtener ticker BCBA (`exchange=BCBA`) → panel BYMA |
-| **investing** | Obtener `description` para slug Investing |
+| **sec-data** | 获取 `cik_code` → 请求 SEC EDGAR 获取 10-K / 10-Q 申报文件 |
+| **finviz** | 获取美股 `symbol` → 按 Ticker 查询 Finviz 图表与筛选器 |
+| **macrotrends** | 获取企业准确名称 + Ticker → 拼装 Macrotrends 财务历史 URL |
+| **yahoo-finance** | 获取 Ticker + 挂牌 Exchange → 对接 Yahoo Finance 详情 |
+| **byma** | 获取阿根廷 Ticker (`exchange=BCBA`) → 对接 BYMA 行情看板 |
+| **investing** | 获取英文 `description` → 匹配 Investing.com 标的 Slug |

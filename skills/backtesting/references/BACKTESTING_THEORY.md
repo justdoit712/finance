@@ -1,90 +1,70 @@
-# Teoría de Backtesting — Marco Conceptual
+# 回测理论 — 概念框架
 
-## GIGO (Garbage In, Garbage Out)
+## GIGO 原则（垃圾进，垃圾出）
 
-El backtesting más sofisticado es inútil si los datos de entrada son basura.
-Fuentes comunes de basura:
+如果输入的历史数据本身存在缺陷，再复杂的量化回测也毫无意义。
+常见的数据“垃圾”来源包括：
 
-- **Precios ajustados incorrectamente** — splits, dividendos y recompras mal
-  ajustados distorsionan retornos.
-- **Survivorship bias** — usar solo activos que sobreviven hasta hoy ignora
-  los que quebraron y sesga los retornos al alza.
-- **Look-ahead bias** — usar información que no estaba disponible en el momento
-  de la decisión (ej: estadísticas globales en vez de rolling).
-- **Data snooping** — probar 1000 estrategias sobre el mismo dataset y
-  quedarse con la mejor sin ajustar por múltiples comparaciones.
+- **价格复权处理不当** — 拆股、分红送股、股份回购等未正确前复权/后复权，导致虚假的价格跳变并严重扭曲真实收益率。
+- **幸存者偏差（Survivorship Bias）** — 仅使用目前仍然上市交易的标的，忽视了历史上退市或破产退市的股票，从而系统性虚增历史收益率。
+- **未来函数 / 前瞻偏差（Look-Ahead Bias）** — 在历史决策时点使用了该时点尚无法获取的未来信息（例如：使用全样本全局均值或方差进行归一化，而非滚动窗口统计量）。
+- **数据窥探（Data Snooping / P-Hacking）** — 在同一个数据集上尝试 1000 种策略，仅挑选表现最优的一种展示，而未针对多重假设检验进行惩罚修正。
 
-## El Trilema del Backtesting
+## 回测不可能三角（The Trilemma of Backtesting）
 
-Todo backtesting enfrenta tres fuerzas en conflicto:
+所有的量化回测都面临三个相互冲突的核心目标：
 
 ```
-         Realismo
-            ╱╲
-           ╱  ╲
-          ╱    ╲
-         ╱      ╲
-   Simpleza ――――― Robustez
+         真实性 (Realism)
+             ╱╲
+            ╱  ╲
+           ╱    ╲
+          ╱      ╲
+ 简洁性 (Simplicity) ―――― 稳健性 (Robustness)
 ```
 
-- **Realismo**: incluir costos, slippage, impacto de mercado, restricciones
-  regulatorias. Más realista = más parámetros = más overfitting.
-- **Simpleza**: pocos parámetros, reglas claras. Más simple = menos overfitting
-  = menos realista.
-- **Robustez**: la estrategia funciona en diferentes mercados, períodos y
-  regímenes. Más robustez requiere más tests = más grados de libertad.
+- **真实性（Realism）**：纳入交易佣金、滑点、市场冲击成本、流动性限制及监管约束。回测模型越贴近实盘细节，引入的参数和假设越多，过拟合（Overfitting）风险越大。
+- **简洁性（Simplicity）**：参数少、规则清晰、逻辑直接。模型越简单，过拟合风险越低，但往往无法捕捉复杂的市场微观结构与实盘摩擦。
+- **稳健性（Robustness）**：策略在不同资产类别、历史时期和市场状态（Regime）下均能稳定运行。追求极高的稳健性需要经过更多场景与参数测试，从而引入了更多自由度。
 
-No se puede maximizar todo simultáneamente. El arte está en el equilibrio.
+没有任何策略能同时将这三者推向极致。量化研究的艺术在于在三者之间找到最佳权衡。
 
-## Las 5 Etapas del Backtesting
+## 回测五阶段流程（5 Stages of Backtesting）
 
-El framework sigue 5 etapas secuenciales:
+本框架遵循严格的 5 个先后递进阶段：
 
-### Etapa 1: Datos
-Obtener datos limpios, ajustados, sin sesgos. Múltiples fuentes para
-cross-validation. Mínimo 5 años de datos diarios (preferiblemente 10+).
-Incluir múltiples regímenes de mercado (bull, bear, lateral, alta/baja vol).
+### 第 1 阶段：数据准备（Data）
+获取清洗后、复权正确且剔除各类偏差的高质量数据。引入多数据源进行交叉比对验证。日频数据建议至少具备 5 年以上（推荐 10 年以上），必须覆盖不同的市场环境（牛市、熊市、震荡市、高波动与低波动时期）。
 
-### Etapa 2: Investigación
-Formular hipótesis de trading basadas en lógica económica o behavioral.
-No hacer data mining ciego — cada estrategia debe tener una razón de ser.
-Documentar el edge esperado y bajo qué condiciones debería funcionar o fallar.
+### 第 2 阶段：策略研究（Research）
+基于经济学逻辑或行为金融学机制提出明确的交易假说。坚决杜绝盲目的“数据挖掘”——每个策略的建立都必须有底层逻辑支撑。清晰记录预期的 Alpha 优势（Edge）来源，明确指出该逻辑在何种市场环境下有效、在何种环境下可能失效。
 
-### Etapa 3: Métricas
-Calcular los 30+ ratios de performance y riesgo sobre el período IS
-(in-sample). No mirar solo el Sharpe — analizar drawdowns, colas, consistencia
-por períodos, y relación riesgo/retorno desde múltiples ángulos.
+### 第 3 阶段：指标评估（Metrics）
+在样本内（In-Sample, IS）区间计算 30+ 项风险与收益指标。切忌“唯夏普比率论”——必须深入分析最大回撤（Drawdown）、尾部极值风险、收益率在不同时期的稳定一致性，从多个维度审视风险收益比。
 
-### Etapa 4: Parametrización
-Optimizar parámetros de la estrategia (ventanas de SMA, umbrales de RSI, etc.)
-dentro del período IS. Técnicas:
-- **Parameter sweep**: grilla 2D/3D de parámetros.
-- **Monte Carlo**: muestreo aleatorio del espacio de parámetros.
-- **Walk-forward**: validación fuera de muestra con ventanas deslizantes.
+### 第 4 阶段：参数寻优（Parameterisation）
+在样本内区间对策略核心参数（如双均线窗口周期、RSI 阈值等）进行调优。常见方法：
+- **参数扫描（Parameter Sweep）**：二维或三维参数网格遍历。
+- **蒙特卡洛寻优（Monte Carlo）**：参数空间的随机采样搜索。
+- **走步向前验证（Walk-Forward）**：采用滚动时间窗口进行样本外验证。
 
-⚠️ El error común es optimizar parámetros para maximizar Sharpe IS y luego
-presentar ese Sharpe como si fuera representativo. El Sharpe OOS (walk-forward)
-es el que realmente importa.
+⚠️ 极易出现的致命错误：通过调参将样本内夏普比率最大化，并以此作为该策略的预期回报。真正具备参考价值的是样本外（OOS / Walk-Forward）的夏普比率。
 
-### Etapa 5: Validación
-Confirmar que la estrategia generaliza fuera de la muestra:
-- **Walk-forward CV**: IS/OOS con gap. Si el Sharpe OOS es muy inferior al IS,
-  hay overfitting.
-- **Stress testing**: ¿qué pasa si el mercado cambia de régimen? (shocks de
-  volatilidad, correlaciones, tasas).
-- **Simulación forward-looking**: miles de paths sintéticos con Johnson SU +
-  cópula. Da una distribución completa de resultados posibles, no un solo
-  número.
-- **Portability**: probar en diferentes activos, mercados y períodos.
+### 第 5 阶段：严谨验证（Validation）
+确认策略在未知样本外数据上的泛化能力：
+- **走步向前交叉验证（Walk-Forward CV）**：采用严格划分且带有隔离期（Gap）的 IS/OOS 测试。若 OOS 夏普比率显著低于 IS，说明策略严重过拟合。
+- **压力测试（Stress Testing）**：当市场发生体制转换时策略如何表现？（如波动率骤升、相关性崩塌、流动性紧缩与利率剧变冲击）。
+- **前瞻仿真模拟（Forward-Looking Simulation）**：基于 Johnson SU 边际分布与 Copula 联合分布生成数以万计的合成市场路径。输出策略未来可能结果的完整概率分布，而非单一期望值。
+- **跨资产与跨周期可移植性（Portability）**：将策略应用于其他相关或不相关的资产、不同的境外市场以及历史盲测周期中检验其普适性。
 
-## Errores Comunes
+## 常见错误与避坑指南
 
-| Error | Consecuencia | Cómo evitarlo |
+| 常见错误 | 严重后果 | 解决与防范手段 |
 |-------|-------------|---------------|
-| Optimizar parámetros en全体 datos | Sharpe inflado, no replicable | Walk-forward CV |
-| Ignorar costos de transacción | Estrategias de alta frecuencia parecen rentables | Incluir commission + slippage |
-| Usar datos sin ajustar | Retornos distorsionados por splits/dividendos | Usar precios ajustados |
-| Probar 100 estrategias y reportar la mejor | Sesgo de selección (data snooping) | Penalizar por múltiples comparaciones |
-| No separar IS/OOS | Overfitting no detectado | Siempre tener un período OOS |
-| Usar métricas globales para normalización | Look-ahead bias | Rolling windows exclusivamente |
-| Confundir correlación con causalidad | Estrategias espurias | Exigir lógica económica subyacente |
+| 在全样本数据上优化参数 | 样本内夏普虚高，实盘无法复现 | 采用走步向前交叉验证（Walk-Forward CV） |
+| 忽略交易成本与摩擦 | 高换手率策略看似利润丰厚，实盘大幅亏损 | 严格计入佣金、印花税及市场滑点 |
+| 使用未复权的价格数据 | 拆股与分红导致价格突变，收益率失真 | 统一采用规范前复权或后复权价格 |
+| 尝试上百种策略仅汇报最优者 | 严重的挑选偏差（Data Snooping / P-Hacking） | 引入多重假设检验惩罚修正（如 White's Reality Check） |
+| 未严格区分样本内与样本外 | 无法察觉策略模型过拟合 | 始终强制保留独立的样本外（OOS）保留集 |
+| 使用全局统计指标进行归一化 | 引入未来函数（Look-Ahead Bias） | 一律采用纯历史数据的滚动窗口（Rolling Windows） |
+| 将统计相关性混同于因果机制 | 挖掘出脆弱的伪策略，市场稍变即失效 | 要求必须具备合理的经济学或金融行为学逻辑支撑 |

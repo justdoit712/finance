@@ -1,389 +1,383 @@
-# Scanner Columns — Referencia Exhaustiva
+# Scanner 字段列 (Columns) — 详尽参考指南
 
-> Lista exhaustiva de las **columnas** que se pueden pasar en el array
-> `columns: []` del payload `POST /{market}/scan`. El asset estructurado
-> esta en [`../assets/scanner_columns.json`](../assets/scanner_columns.json)
-> con grupos pre-armados.
+> 本文详细列出了可在 `POST /{market}/scan` 请求载荷中的 `columns: []` 数组里传入的**字段列名称 (Columns)**。
+> 结构化资产文件位于 [`../assets/scanner_columns.json`](../assets/scanner_columns.json)，其中包含各预置分组。
 
-**Total verificadas:** 130+ columnas. La API expone ~300+ totales — esta
-lista cubre todo lo accionable para finanzas y trading.
+**已验证字段总数：** 130+ 列。该 API 实际上暴露出 ~300+ 个字段 —— 本清单全面涵盖了金融分析与交易实操所需的全部实用字段。
 
 ---
 
-## Indice
+## 目录
 
-1. [Identidad y metadata](#1-identidad-y-metadata)
-2. [Quote basico](#2-quote-basico)
-3. [Volumen y volatilidad](#3-volumen-y-volatilidad)
-4. [Valuacion](#4-valuacion)
-5. [Indicadores tecnicos — osciladores](#5-indicadores-tecnicos--osciladores)
-6. [Indicadores tecnicos — medias moviles](#6-indicadores-tecnicos--medias-moviles)
-7. [Ratings (Recommend.*)](#7-ratings-recommend)
-8. [Pivots mensuales](#8-pivots-mensuales)
-9. [Balance sheet](#9-balance-sheet)
-10. [Income statement](#10-income-statement)
-11. [Cash flow](#11-cash-flow)
-12. [Ratios](#12-ratios)
-13. [Growth](#13-growth)
-14. [Dividendos](#14-dividendos)
-15. [Earnings y forecasts](#15-earnings-y-forecasts)
-16. [Analyst targets y recommendations](#16-analyst-targets-y-recommendations)
-17. [Shares y ownership](#17-shares-y-ownership)
-18. [Beta y correlacion](#18-beta-y-correlacion)
-19. [Performance returns](#19-performance-returns)
-20. [Casos comunes — bundles recomendados](#20-casos-comunes--bundles-recomendados)
+1. [基础标识与元数据 (Identity & Metadata)](#1-基础标识与元数据-identity--metadata)
+2. [基础行情报价 (Basic Quote)](#2-基础行情报价-basic-quote)
+3. [成交量与波动率 (Volume & Volatility)](#3-成交量与波动率-volume--volatility)
+4. [估值指标 (Valuation)](#4-估值指标-valuation)
+5. [技术指标 — 震荡指标类 (Oscillators)](#5-技术指标--震荡指标类-oscillators)
+6. [技术指标 — 移动均线类 (Moving Averages)](#6-技术指标--移动均线类-moving-averages)
+7. [买卖评级 (Ratings: Recommend.*)](#7-买卖评级-ratings-recommend)
+8. [月线枢轴点 (Monthly Pivots)](#8-月线枢轴点-monthly-pivots)
+9. [资产负债表 (Balance Sheet)](#9-资产负债表-balance-sheet)
+10. [利润表 (Income Statement)](#10-利润表-income-statement)
+11. [现金流量表 (Cash Flow)](#11-现金流量表-cash-flow)
+12. [财务比率 (Ratios)](#12-财务比率-ratios)
+13. [成长性指标 (Growth)](#13-成长性指标-growth)
+14. [股息分红 (Dividends)](#14-股息分红-dividends)
+15. [财报业绩与预期 (Earnings & Forecasts)](#15-财报业绩与预期-earnings--forecasts)
+16. [分析师目标价与评级 (Analyst Targets & Recommendations)](#16-分析师目标价与评级-analyst-targets--recommendations)
+17. [股本与股权结构 (Shares & Ownership)](#17-股本与股权结构-shares--ownership)
+18. [Beta 与相关系数 (Beta & Correlation)](#18-beta-与相关系数-beta--correlation)
+19. [历史收益率与表现 (Performance Returns)](#19-历史收益率与表现-performance-returns)
+20. [常见场景预设组合包 (Bundles)](#20-常见场景预设组合包-bundles)
 
 ---
 
-## 1. Identidad y metadata
+## 1. 基础标识与元数据 (Identity & Metadata)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `name` | str | Ticker corto (ej: `GGAL`). NO incluye exchange prefix. |
-| `description` | str | Nombre completo del instrumento (ej: `Grupo Financiero Galicia SA Sponsored ADR Class B`) |
-| `logoid` | str | ID del logo. URL completa: `https://s3-symbol-logo.tradingview.com/{logoid}--big.svg` |
-| `exchange` | str | Exchange code: `NASDAQ`, `NYSE`, `BCBA`, `BME`, `BMFBOVESPA`, etc. |
-| `type` | str | `stock`, `dr` (ADR/CEDEAR), `etf`, `fund`, `structured`, `bond`, `crypto`, `forex` |
-| `country` | str | Pais del emisor (`Argentina`, `United States`, etc.) |
-| `sector` | str | Sector economico (`Finance`, `Technology`, `Energy`, etc.) |
-| `industry` | str | Industria especifica (`Regional Banks`, `Software`, etc.) |
-| `currency` | str | Moneda de cotizacion (`USD`, `ARS`, `EUR`, `BRL`, `GBP`, etc.) |
+| `name` | str | 简短代码 (例如: `GGAL`)，不包含交易所前缀。 |
+| `description` | str | 标的完整名称 (例如: `Grupo Financiero Galicia SA Sponsored ADR Class B`) |
+| `logoid` | str | 标的 Logo ID。完整图片链接为: `https://s3-symbol-logo.tradingview.com/{logoid}--big.svg` |
+| `exchange` | str | 挂牌交易所代码: `NASDAQ`、`NYSE`、`BCBA`、`BME`、`BMFBOVESPA` 等 |
+| `type` | str | 标的类别: `stock`, `dr` (ADR/CEDEAR), `etf`, `fund`, `structured`, `bond`, `crypto`, `forex` |
+| `country` | str | 发行方所在国家 (`Argentina`, `United States` 等) |
+| `sector` | str | 所属经济板块 (`Finance`, `Technology`, `Energy` 等) |
+| `industry` | str | 所属细分行业 (`Regional Banks`, `Software` 等) |
+| `currency` | str | 计价结算货币 (`USD`, `ARS`, `EUR`, `BRL`, `GBP` 等) |
 
 ---
 
-## 2. Quote basico
+## 2. 基础行情报价 (Basic Quote)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `close` | float | Ultimo precio / cierre |
-| `open` | float | Apertura del dia |
-| `high` | float | Maximo del dia |
-| `low` | float | Minimo del dia |
-| `change` | float | Cambio porcentual del dia (en %, no decimal) |
-| `change_abs` | float | Cambio absoluto del dia |
-| `vwap` | float | Volume-Weighted Average Price |
+| `close` | float | 最新价格 / 收盘价 |
+| `open` | float | 当日开盘价 |
+| `high` | float | 当日最高价 |
+| `low` | float | 当日最低价 |
+| `change` | float | 当日涨跌幅百分比 (例如: 1.5 表示 1.5%，非 0.015) |
+| `change_abs` | float | 当日涨跌绝对额 |
+| `vwap` | float | 成交量加权平均价 (Volume-Weighted Average Price) |
 
 ---
 
-## 3. Volumen y volatilidad
+## 3. 成交量与波动率 (Volume & Volatility)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `volume` | float | Volumen del dia |
-| `average_volume_30d_calc` | float | Volumen promedio 30 dias |
-| `volume_avg_3m` | float | Volumen promedio 3 meses |
-| `volume_change` | float | Cambio % en volumen vs promedio |
-| `Volatility.D` | float | Volatilidad diaria % |
-| `Volatility.W` | float | Volatilidad semanal % |
-| `Volatility.M` | float | Volatilidad mensual % |
-| `High.All` | float | Maximo historico (all-time) |
-| `Low.All` | float | Minimo historico (all-time) |
-| `price_52_week_high` | float | Maximo 52 semanas |
-| `price_52_week_low` | float | Minimo 52 semanas |
+| `volume` | float | 当日成交量 |
+| `average_volume_30d_calc` | float | 30 日平均成交量 |
+| `volume_avg_3m` | float | 3 个月平均成交量 |
+| `volume_change` | float | 成交量相对均量的变化比例 (%) |
+| `Volatility.D` | float | 日波动率 (%) |
+| `Volatility.W` | float | 周波动率 (%) |
+| `Volatility.M` | float | 月波动率 (%) |
+| `High.All` | float | 历史最高价 (All-time high) |
+| `Low.All` | float | 历史最低价 (All-time low) |
+| `price_52_week_high` | float | 52 周最高价 |
+| `price_52_week_low` | float | 52 周最低价 |
 
 ---
 
-## 4. Valuacion
+## 4. 估值指标 (Valuation)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `market_cap_basic` | float | Market capitalization (capitalizacion bursatil) |
-| `market_cap_calc` | float | Market cap calculada (alternativa) |
-| `enterprise_value_fq` | float | Enterprise value trimestre actual |
-| `price_earnings_ttm` | float | P/E ratio TTM (trailing twelve months) |
-| `price_earnings_to_growth_ratio` | float | PEG ratio |
-| `price_sales` | float | P/S ratio |
-| `price_book` | float | P/B ratio |
-| `price_revenue_ttm` | float | P/Revenue TTM |
-| `enterprise_value_ebitda_ttm` | float | EV/EBITDA |
-| `enterprise_value_to_revenue_ttm` | float | EV/Revenue |
-| `book_value_per_share_fq` | float | Book value per share |
-| `earnings_per_share_basic_ttm` | float | EPS basico TTM |
-| `earnings_per_share_diluted_ttm` | float | EPS diluido TTM |
+| `market_cap_basic` | float | 总市值 (Market Capitalization) |
+| `market_cap_calc` | float | 计算总市值 (备选计算方式) |
+| `enterprise_value_fq` | float | 企业价值 EV (当季) |
+| `price_earnings_ttm` | float | 市盈率 P/E TTM (过去 12 个月) |
+| `price_earnings_to_growth_ratio` | float | PEG 估值比率 |
+| `price_sales` | float | 市销率 P/S |
+| `price_book` | float | 市净率 P/B |
+| `price_revenue_ttm` | float | 价格/营业收入比率 TTM |
+| `enterprise_value_ebitda_ttm` | float | 企业价值与 EBITDA 比率 (EV/EBITDA) |
+| `enterprise_value_to_revenue_ttm` | float | 企业价值与营业收入比率 (EV/Revenue) |
+| `book_value_per_share_fq` | float | 每股净资产 (当季) |
+| `earnings_per_share_basic_ttm` | float | 基本每股收益 EPS TTM |
+| `earnings_per_share_diluted_ttm` | float | 稀释每股收益 EPS TTM |
 
 ---
 
-## 5. Indicadores tecnicos — osciladores
+## 5. 技术指标 — 震荡指标类 (Oscillators)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `RSI` | float | Relative Strength Index (14) |
-| `RSI[1]` | float | RSI del periodo anterior |
-| `Stoch.K` | float | Stochastic %K |
-| `Stoch.D` | float | Stochastic %D |
-| `MACD.macd` | float | MACD line |
-| `MACD.signal` | float | MACD signal line |
-| `ADX` | float | Average Directional Index |
-| `ADX+DI` | float | ADX +DI |
-| `ADX-DI` | float | ADX -DI |
-| `ATR` | float | Average True Range |
-| `CCI20` | float | Commodity Channel Index (20) |
-| `BBPower` | float | Bull/Bear Power |
-| `UO` | float | Ultimate Oscillator |
-| `Mom` | float | Momentum |
-| `AO` | float | Awesome Oscillator |
-| `W.R` | float | Williams %R |
+| `RSI` | float | 相对强弱指标 Relative Strength Index (14) |
+| `RSI[1]` | float | 前一周期 RSI |
+| `Stoch.K` | float | 随机指标 Stochastic %K |
+| `Stoch.D` | float | 随机指标 Stochastic %D |
+| `MACD.macd` | float | MACD 快线 (DIF) |
+| `MACD.signal` | float | MACD 信号线 (DEA) |
+| `ADX` | float | 平均趋向指数 Average Directional Index |
+| `ADX+DI` | float | ADX 正向指标 (+DI) |
+| `ADX-DI` | float | ADX 负向指标 (-DI) |
+| `ATR` | float | 真实波动幅度均值 Average True Range |
+| `CCI20` | float | 顺势指标 Commodity Channel Index (20) |
+| `BBPower` | float | 多空力量指标 (Bull/Bear Power) |
+| `UO` | float | 终极指标 (Ultimate Oscillator) |
+| `Mom` | float | 动量指标 (Momentum) |
+| `AO` | float | 动量震荡指标 (Awesome Oscillator) |
+| `W.R` | float | 威廉指标 Williams %R |
 
-### Interpretacion clave
+### 核心研判法则
 
-- **RSI**: 0-100. >70 = sobrecomprado. <30 = sobrevendido.
-- **Stoch.K**: 0-100. >80 sobrecomprado. <20 sobrevendido.
-- **MACD.macd > MACD.signal**: signal bullish (cross).
-- **ADX > 25**: trend fuerte (en cualquier direccion).
-- **W.R**: -100 a 0. > -20 sobrecomprado, < -80 sobrevendido.
+- **RSI**：取值 0-100。>70 为超买区，<30 为超卖区。
+- **Stoch.K**：取值 0-100。>80 为超买区，<20 为超卖区。
+- **MACD.macd > MACD.signal**：金叉信号，看多 (Bullish cross)。
+- **ADX > 25**：表明当前存在强势趋势（无论上涨或下跌趋势）。
+- **W.R**：取值 -100 到 0。> -20 为超买，< -80 为超卖。
 
 ---
 
-## 6. Indicadores tecnicos — medias moviles
+## 6. 技术指标 — 移动均线类 (Moving Averages)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `SMA10` | float | Simple MA 10 |
-| `SMA20` | float | Simple MA 20 |
-| `SMA30` | float | Simple MA 30 |
-| `SMA50` | float | Simple MA 50 |
-| `SMA100` | float | Simple MA 100 |
-| `SMA200` | float | Simple MA 200 |
-| `EMA10` | float | Exponential MA 10 |
-| `EMA20` | float | Exponential MA 20 |
-| `EMA30` | float | Exponential MA 30 |
-| `EMA50` | float | Exponential MA 50 |
-| `EMA100` | float | Exponential MA 100 |
-| `EMA200` | float | Exponential MA 200 |
-| `VWMA` | float | Volume-Weighted MA |
-| `HullMA9` | float | Hull MA (9) |
-| `Ichimoku.BLine` | float | Ichimoku Base Line |
+| `SMA10` | float | 10 日简单移动平均线 |
+| `SMA20` | float | 20 日简单移动平均线 |
+| `SMA30` | float | 30 日简单移动平均线 |
+| `SMA50` | float | 50 日简单移动平均线 |
+| `SMA100` | float | 100 日简单移动平均线 |
+| `SMA200` | float | 200 日简单移动平均线 |
+| `EMA10` | float | 10 日指数移动平均线 |
+| `EMA20` | float | 20 日指数移动平均线 |
+| `EMA30` | float | 30 日指数移动平均线 |
+| `EMA50` | float | 50 日指数移动平均线 |
+| `EMA100` | float | 100 日指数移动平均线 |
+| `EMA200` | float | 200 日指数移动平均线 |
+| `VWMA` | float | 成交量加权移动均线 |
+| `HullMA9` | float | 赫尔移动平均线 (9) |
+| `Ichimoku.BLine` | float | 一目均衡表基准线 (Base Line) |
 
-### Lectura clasica
+### 经典均线研判
 
-- **Golden cross**: `SMA50 > SMA200` (bullish).
-- **Death cross**: `SMA50 < SMA200` (bearish).
-- **Precio > EMA200**: tendencia largo plazo alcista.
-- **Precio > EMA50 > EMA200**: tendencia firme alcista.
+- **黄金交叉 (Golden Cross)**：`SMA50 > SMA200`（看涨信号）。
+- **死亡交叉 (Death Cross)**：`SMA50 < SMA200`（看跌信号）。
+- **价格 > EMA200**：长期多头走势。
+- **价格 > EMA50 > EMA200**：稳健强劲的多头排列。
 
 ---
 
-## 7. Ratings (Recommend.*)
+## 7. 买卖评级 (Ratings: Recommend.*)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `Recommend.All` | float [-1, 1] | Rating agregado de TODOS los indicadores |
-| `Recommend.MA` | float [-1, 1] | Rating solo de medias moviles |
-| `Recommend.Other` | float [-1, 1] | Rating solo de osciladores |
+| `Recommend.All` | float [-1, 1] | 基于**全部**指标的综合聚合评级评分 |
+| `Recommend.MA` | float [-1, 1] | 仅基于移动均线类的评级评分 |
+| `Recommend.Other` | float [-1, 1] | 仅基于震荡指标类的评级评分 |
 
-### Mapeo a buckets
+### 评分区间与分档映射
 
-| Rango | Bucket | UI label |
+| 区间范围 | 分档标识 (Bucket) | 界面标签 (UI Label) |
 |-------|--------|----------|
-| -1.00 a -0.50 | `STRONG_SELL` | Venta fuerte |
-| -0.50 a -0.10 | `SELL` | Venta |
-| -0.10 a +0.10 | `NEUTRAL` | Neutral |
-| +0.10 a +0.50 | `BUY` | Compra |
-| +0.50 a +1.00 | `STRONG_BUY` | Compra fuerte |
+| -1.00 到 -0.50 | `STRONG_SELL` | 强力卖出 |
+| -0.50 到 -0.10 | `SELL` | 卖出 |
+| -0.10 到 +0.10 | `NEUTRAL` | 中立 |
+| +0.10 到 +0.50 | `BUY` | 买入 |
+| +0.50 到 +1.00 | `STRONG_BUY` | 强力买入 |
 
-> Asset estructurado en [`../assets/recommend_ratings.json`](../assets/recommend_ratings.json).
+> 结构化资产文件见 [`../assets/recommend_ratings.json`](../assets/recommend_ratings.json)。
 
 ---
 
-## 8. Pivots mensuales
+## 8. 月线枢轴点 (Monthly Pivots)
 
-Niveles de soporte/resistencia mensuales calculados con 5 metodos
-diferentes. Todos en formato `Pivot.M.{METODO}.{NIVEL}`.
+基于 5 种不同经典算法计算的月线支撑与阻力位。统一命名格式为 `Pivot.M.{METHOD}.{LEVEL}`。
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `Pivot.M.Classic.Middle` | float | Pivot point Classic mensual |
-| `Pivot.M.Classic.S1` | float | Soporte 1 Classic |
-| `Pivot.M.Classic.S2` | float | Soporte 2 Classic |
-| `Pivot.M.Classic.S3` | float | Soporte 3 Classic |
-| `Pivot.M.Classic.R1` | float | Resistencia 1 Classic |
-| `Pivot.M.Classic.R2` | float | Resistencia 2 Classic |
-| `Pivot.M.Classic.R3` | float | Resistencia 3 Classic |
-| `Pivot.M.Fibonacci.S1` | float | Soporte 1 Fibonacci |
-| `Pivot.M.Fibonacci.R1` | float | Resistencia 1 Fibonacci |
-| `Pivot.M.Camarilla.S1` | float | Soporte 1 Camarilla |
-| `Pivot.M.Camarilla.R1` | float | Resistencia 1 Camarilla |
-| `Pivot.M.Woodie.S1` | float | Soporte 1 Woodie |
-| `Pivot.M.Woodie.R1` | float | Resistencia 1 Woodie |
-| `Pivot.M.DM.S1` | float | Soporte 1 DeMark |
-| `Pivot.M.DM.R1` | float | Resistencia 1 DeMark |
+| `Pivot.M.Classic.Middle` | float | 经典 (Classic) 月线中轴枢轴点 |
+| `Pivot.M.Classic.S1` | float | 经典支撑位 1 (S1) |
+| `Pivot.M.Classic.S2` | float | 经典支撑位 2 (S2) |
+| `Pivot.M.Classic.S3` | float | 经典支撑位 3 (S3) |
+| `Pivot.M.Classic.R1` | float | 经典阻力位 1 (R1) |
+| `Pivot.M.Classic.R2` | float | 经典阻力位 2 (R2) |
+| `Pivot.M.Classic.R3` | float | 经典阻力位 3 (R3) |
+| `Pivot.M.Fibonacci.S1` | float | 斐波那契 (Fibonacci) 支撑位 1 |
+| `Pivot.M.Fibonacci.R1` | float | 斐波那契 (Fibonacci) 阻力位 1 |
+| `Pivot.M.Camarilla.S1` | float | 卡玛利拉 (Camarilla) 支撑位 1 |
+| `Pivot.M.Camarilla.R1` | float | 卡玛利拉 (Camarilla) 阻力位 1 |
+| `Pivot.M.Woodie.S1` | float | 伍迪 (Woodie) 支撑位 1 |
+| `Pivot.M.Woodie.R1` | float | 伍迪 (Woodie) 阻力位 1 |
+| `Pivot.M.DM.S1` | float | 德马克 (DeMark) 支撑位 1 |
+| `Pivot.M.DM.R1` | float | 德马克 (DeMark) 阻力位 1 |
 
-> Tambien existen `Pivot.W.{METODO}.{NIVEL}` (semanales) y
-> `Pivot.D.{METODO}.{NIVEL}` (diarios) con la misma sintaxis.
+> 此外，同套语法还支持周线 `Pivot.W.{METHOD}.{LEVEL}` 与日线 `Pivot.D.{METHOD}.{LEVEL}`。
 
 ---
 
-## 9. Balance sheet
+## 9. 资产负债表 (Balance Sheet)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `total_assets` | float | Activos totales |
-| `total_current_assets` | float | Activos corrientes |
-| `cash_n_short_term_invest` | float | Cash + inversiones corto plazo |
-| `total_debt` | float | Deuda total |
-| `long_term_debt` | float | Deuda largo plazo |
-| `total_liabilities_fq` | float | Pasivos totales |
-| `total_current_liabilities` | float | Pasivos corrientes |
-| `total_equity` | float | Equity total |
-| `minority_interest` | float | Interes minoritario |
+| `total_assets` | float | 总资产 (Total Assets) |
+| `total_current_assets` | float | 流动资产总额 (Current Assets) |
+| `cash_n_short_term_invest` | float | 现金及短期投资 |
+| `total_debt` | float | 总负债 / 债务总额 |
+| `long_term_debt` | float | 长期负债 |
+| `total_liabilities_fq` | float | 负债总额 (当季) |
+| `total_current_liabilities` | float | 流动负债总额 |
+| `total_equity` | float | 所有者权益总额 (Total Equity) |
+| `minority_interest` | float | 少数股东权益 |
 
-> Todos en moneda del fondo (`currency` field).
+> 所有金额数值均以对应资产的本币（`currency` 字段）计价。
 
 ---
 
-## 10. Income statement
+## 10. 利润表 (Income Statement)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `total_revenue` | float | Revenue total TTM |
-| `gross_profit` | float | Ganancia bruta |
-| `operating_income` | float | Ingreso operativo |
-| `net_income` | float | Net income |
-| `ebitda` | float | EBITDA |
-| `operating_margin` | float | Margen operativo % |
-| `gross_margin` | float | Margen bruto % |
-| `net_margin` | float | Margen neto % |
-| `ebitda_margin` | float | Margen EBITDA % |
-| `pre_tax_margin` | float | Margen pre-tax % |
+| `total_revenue` | float | 营业收入 TTM |
+| `gross_profit` | float | 毛利润 |
+| `operating_income` | float | 营业利润 |
+| `net_income` | float | 净利润 (Net Income) |
+| `ebitda` | float | 息税折旧摊销前利润 (EBITDA) |
+| `operating_margin` | float | 营业利润率 (%) |
+| `gross_margin` | float | 毛利率 (%) |
+| `net_margin` | float | 净利率 (%) |
+| `ebitda_margin` | float | EBITDA 利润率 (%) |
+| `pre_tax_margin` | float | 税前利润率 (%) |
 
 ---
 
-## 11. Cash flow
+## 11. 现金流量表 (Cash Flow)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `free_cash_flow` | float | Free cash flow |
-| `cash_f_operating_activities` | float | CF operativo |
-| `cash_f_investing_activities` | float | CF inversion |
-| `cash_f_financing_activities` | float | CF financiamiento |
-| `capital_expenditures` | float | CapEx |
+| `free_cash_flow` | float | 自由现金流 (Free Cash Flow) |
+| `cash_f_operating_activities` | float | 经营活动产生的现金流量净额 |
+| `cash_f_investing_activities` | float | 投资活动产生的现金流量净额 |
+| `cash_f_financing_activities` | float | 筹资活动产生的现金流量净额 |
+| `capital_expenditures` | float | 资本性支出 (CapEx) |
 
 ---
 
-## 12. Ratios
+## 12. 财务比率 (Ratios)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `current_ratio` | float | Activos corrientes / Pasivos corrientes |
-| `quick_ratio` | float | (Cash + receivables) / Pasivos corrientes |
-| `debt_to_equity` | float | Deuda / Equity |
-| `debt_to_assets` | float | Deuda / Activos |
-| `return_on_equity` | float | ROE % |
-| `return_on_assets` | float | ROA % |
-| `return_on_invested_capital` | float | ROIC % |
-| `asset_turnover_fy` | float | Asset turnover anual |
-| `inventory_turnover_fy` | float | Inventory turnover |
+| `current_ratio` | float | 流动比率 (流动资产 / 流动负债) |
+| `quick_ratio` | float | 速动比率 ((现金 + 应收款项) / 流动负债) |
+| `debt_to_equity` | float | 产权比率 / 负债权益比 (债务 / 净资产) |
+| `debt_to_assets` | float | 资产负债率 (债务 / 总资产) |
+| `return_on_equity` | float | 净资产收益率 ROE (%) |
+| `return_on_assets` | float | 总资产收益率 ROA (%) |
+| `return_on_invested_capital` | float | 投入资本回报率 ROIC (%) |
+| `asset_turnover_fy` | float | 总资产周转率 (财年) |
+| `inventory_turnover_fy` | float | 存货周转率 (财年) |
 
 ---
 
-## 13. Growth
+## 13. 成长性指标 (Growth)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `revenue_yoy_growth` | float | Revenue YoY % |
-| `revenue_yoy_growth_fy` | float | Revenue YoY anual % |
-| `earnings_per_share_diluted_yoy_growth` | float | EPS YoY % |
-| `net_income_yoy_growth` | float | Net income YoY % |
-| `ebitda_yoy_growth` | float | EBITDA YoY % |
+| `revenue_yoy_growth` | float | 营业收入同比增长率 YoY (%) |
+| `revenue_yoy_growth_fy` | float | 财年营业收入同比增长率 (%) |
+| `earnings_per_share_diluted_yoy_growth` | float | 稀释每股收益同比增长率 (%) |
+| `net_income_yoy_growth` | float | 净利润同比增长率 (%) |
+| `ebitda_yoy_growth` | float | EBITDA 同比增长率 (%) |
 
 ---
 
-## 14. Dividendos
+## 14. 股息分红 (Dividends)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `dividend_yield_recent` | float | Dividend yield reciente |
-| `dividends_yield` | float | Dividend yield TTM |
-| `dividends_paid` | float | Dividendos pagados |
-| `dps_common_stock_prim_issue_fy` | float | DPS anual |
-| `payout_ratio_fy` | float | Payout ratio anual |
-| `continuous_dividend_payout` | int | Años consecutivos pagando dividendos |
-| `continuous_dividend_growth` | int | Años consecutivos creciendo dividendos |
+| `dividend_yield_recent` | float | 最新股息收益率 (%) |
+| `dividends_yield` | float | 过去 12 个月股息收益率 TTM (%) |
+| `dividends_paid` | float | 派发股息总额 |
+| `dps_common_stock_prim_issue_fy` | float | 财年每股股息 DPS |
+| `payout_ratio_fy` | float | 财年股利支付率 (%) |
+| `continuous_dividend_payout` | int | 连续派息年数 |
+| `continuous_dividend_growth` | int | 连续增加派息年数 |
 
 ---
 
-## 15. Earnings y forecasts
+## 15. 财报业绩与预期 (Earnings & Forecasts)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `earnings_release_date` | int (unix) | Fecha ultima earnings |
-| `earnings_release_next_date` | int (unix) | Fecha proxima earnings |
-| `earnings_release_time` | int | Hora ultima earnings (offset unix) |
-| `earnings_release_next_time` | int | Hora proxima earnings (offset unix) |
-| `earnings_per_share_fq` | float | EPS reportado trimestre actual |
-| `revenue_fq` | float | Revenue reportado trimestre actual |
-| `earnings_per_share_forecast_fq` | float | EPS forecast trimestre actual |
-| `revenue_forecast_fq` | float | Revenue forecast trimestre actual |
-| `earnings_per_share_forecast_next_fq` | float | EPS forecast proximo trimestre |
-| `revenue_forecast_next_fq` | float | Revenue forecast proximo trimestre |
+| `earnings_release_date` | int (unix) | 上次财报发布日期 |
+| `earnings_release_next_date` | int (unix) | 下次财报发布日期 |
+| `earnings_release_time` | int | 上次财报具体发布时间 (Unix 偏移量) |
+| `earnings_release_next_time` | int | 下次财报具体发布时间 (Unix 偏移量) |
+| `earnings_per_share_fq` | float | 当季实际报告每股收益 EPS |
+| `revenue_fq` | float | 当季实际报告营业收入 |
+| `earnings_per_share_forecast_fq` | float | 当季每股收益 EPS 市场预期 |
+| `revenue_forecast_fq` | float | 当季营业收入市场预期 |
+| `earnings_per_share_forecast_next_fq` | float | 下季度每股收益 EPS 市场预期 |
+| `revenue_forecast_next_fq` | float | 下季度营业收入市场预期 |
 
-> Los `earnings_release_*_date` son timestamps unix (segundos UTC). Convertir
-> con `datetime.fromtimestamp(ts, tz=timezone.utc)`.
+> 所有 `earnings_release_*_date` 均为 Unix 时间戳（UTC 秒数）。使用 `datetime.fromtimestamp(ts, tz=timezone.utc)` 进行日期转换。
 
 ---
 
-## 16. Analyst targets y recommendations
+## 16. 分析师目标价与评级 (Analyst Targets & Recommendations)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `price_target_average` | float | Precio objetivo promedio analistas |
-| `price_target_high` | float | Precio objetivo alto |
-| `price_target_low` | float | Precio objetivo bajo |
-| `price_target_median` | float | Precio objetivo mediano |
-| `number_of_analyst_opinions` | int | Cantidad de analistas |
-| `recommendation_total` | int | Total recomendaciones |
-| `recommendation_buy` | int | Recomendaciones Buy |
-| `recommendation_hold` | int | Recomendaciones Hold |
-| `recommendation_sell` | int | Recomendaciones Sell |
+| `price_target_average` | float | 分析师平均目标价 |
+| `price_target_high` | float | 分析师最高目标价 |
+| `price_target_low` | float | 分析师最低目标价 |
+| `price_target_median` | float | 分析师目标价中位数 |
+| `number_of_analyst_opinions` | int | 覆盖该标的的分析师总数 |
+| `recommendation_total` | int | 评级推荐总数 |
+| `recommendation_buy` | int | 买入 (Buy) 推荐数量 |
+| `recommendation_hold` | int | 持有 (Hold) 推荐数量 |
+| `recommendation_sell` | int | 卖出 (Sell) 推荐数量 |
 
 ---
 
-## 17. Shares y ownership
+## 17. 股本与股权结构 (Shares & Ownership)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `float_shares_outstanding` | float | Float (acciones en circulacion) |
-| `total_shares_outstanding_fundamental` | float | Acciones totales |
-| `shares_outstanding_fundamental_fq` | float | Acciones outstanding trimestre |
-| `shares_owned_institutions` | float | Acciones institucionales |
-| `shares_owned_insiders` | float | Acciones insiders |
-| `short_interest` | float | Short interest |
-| `short_interest_percent` | float | Short interest % |
-| `days_to_cover_short_interest` | float | Days to cover |
+| `float_shares_outstanding` | float | 流通股本 (Float shares) |
+| `total_shares_outstanding_fundamental` | float | 总股本 |
+| `shares_outstanding_fundamental_fq` | float | 季度已发行股份总数 |
+| `shares_owned_institutions` | float | 机构持股比例 (%) |
+| `shares_owned_insiders` | float | 内部人持股比例 (%) |
+| `short_interest` | float | 做空持仓量 |
+| `short_interest_percent` | float | 做空股数占流通股比例 (%) |
+| `days_to_cover_short_interest` | float | 空头回补天数 (Days to Cover) |
 
 ---
 
-## 18. Beta y correlacion
+## 18. Beta 与相关系数 (Beta & Correlation)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `beta_1_year` | float | Beta 1 año |
-| `beta_3_year` | float | Beta 3 años |
-| `beta_5_year` | float | Beta 5 años |
-| `correlation_to_sp500_1m` | float | Correlacion S&P 500 1m |
+| `beta_1_year` | float | 1 年期 Beta 系数 |
+| `beta_3_year` | float | 3 年期 Beta 系数 |
+| `beta_5_year` | float | 5 年期 Beta 系数 |
+| `correlation_to_sp500_1m` | float | 1 个月相对标普 500 的相关系数 |
 
 ---
 
-## 19. Performance returns
+## 19. 历史收益率与表现 (Performance Returns)
 
-| Columna | Tipo | Descripcion |
+| 字段列 | 类型 | 说明 |
 |---------|------|-------------|
-| `Perf.W` | float | Performance semana % |
-| `Perf.1M` | float | Performance 1 mes % |
-| `Perf.3M` | float | Performance 3 meses % |
-| `Perf.6M` | float | Performance 6 meses % |
-| `Perf.Y` | float | Performance 1 año % |
-| `Perf.YTD` | float | Performance YTD % |
-| `Perf.5Y` | float | Performance 5 años % |
-| `Perf.All` | float | Performance all-time % |
+| `Perf.W` | float | 近 1 周收益率 (%) |
+| `Perf.1M` | float | 近 1 个月收益率 (%) |
+| `Perf.3M` | float | 近 3 个月收益率 (%) |
+| `Perf.6M` | float | 近 6 个月收益率 (%) |
+| `Perf.Y` | float | 近 1 年收益率 (%) |
+| `Perf.YTD` | float | 年初至今 (YTD) 收益率 (%) |
+| `Perf.5Y` | float | 近 5 年收益率 (%) |
+| `Perf.All` | float | 上市以来全周期总收益率 (%) |
 
 ---
 
-## 20. Casos comunes — bundles recomendados
+## 20. 常见场景预设组合包 (Bundles)
 
-Bundles pre-armados en [`../assets/column_groups.json`](../assets/column_groups.json).
+预置的组合包定义于 [`../assets/column_groups.json`](../assets/column_groups.json)。
 
-| Modo CLI | Grupo | # columnas |
+| CLI 模式 | 组合包名称 (Group) | 包含列数 |
 |----------|-------|-----------:|
 | `quote` | `quote_basic` | 14 |
 | `quote-extended` | `quote_extended` | 30 |
@@ -397,13 +391,13 @@ Bundles pre-armados en [`../assets/column_groups.json`](../assets/column_groups.
 | `ownership` | `ownership` | 10 |
 | `all` | `all_in_one` | 52 |
 
-### Como agregar columnas custom
+### 如何指定自定义列
 
 ```bash
 py fetch_tradingview.py quote NASDAQ:GGAL --columns "name,close,RSI,MACD.macd,Recommend.All"
 ```
 
-O en Python:
+或在 Python 中直接调用：
 
 ```python
 from fetch_tradingview import scanner_scan
@@ -416,17 +410,17 @@ data = scanner_scan(
 
 ---
 
-## Apendice: como descubrir columnas nuevas
+## 附录：如何发现与探测新字段列
 
-TradingView agrega columnas periodicamente. Para descubrir nuevas:
+TradingView 会不定期新增字段列。探测新列的通用方法如下：
 
-1. Inspeccionar payloads en DevTools del browser sobre `scanner.tradingview.com/{market}/scan`.
-2. Probar columnas candidatas. Si retorna `null` para todos los simbolos: probablemente no existe.
-3. Reportar via PR en este skill.
+1. 打开浏览器 DevTools 开发者工具，观察在 `scanner.tradingview.com/{market}/scan` 请求中的请求体载荷。
+2. 将候选列名传入请求进行测试。如果对于所有标的均返回 `null`，说明该列名可能不存在。
+3. 可在此 Skill 中提交更新维护。
 
-Patrones comunes para nombres:
-- Tecnicos: `{INDICATOR}` o `{INDICATOR}{PERIOD}` (`RSI`, `EMA50`, `CCI20`)
-- Performance: `Perf.{W|1M|3M|...}`
-- Pivots: `Pivot.{D|W|M}.{Classic|Fibonacci|Camarilla|Woodie|DM}.{S1|S2|S3|R1|R2|R3|Middle}`
-- Earnings: `earnings_*` (snake_case)
-- Forecast: `*_forecast_*`
+常见命名规范模式：
+- 技术指标类：`{INDICATOR}` 或 `{INDICATOR}{PERIOD}`（例如 `RSI`、`EMA50`、`CCI20`）
+- 历史表现类：`Perf.{W|1M|3M|...}`
+- 枢轴点类：`Pivot.{D|W|M}.{Classic|Fibonacci|Camarilla|Woodie|DM}.{S1|S2|S3|R1|R2|R3|Middle}`
+- 财报业绩类：`earnings_*`（蛇形命名 snake_case）
+- 预测类：`*_forecast_*`
