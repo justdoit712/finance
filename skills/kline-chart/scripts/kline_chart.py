@@ -21,10 +21,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import threading
 import urllib.parse
 import webbrowser
+from collections.abc import Callable
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -48,6 +50,7 @@ SKILL_DIR = SCRIPT_DIR.parent
 ASSETS_DIR = SKILL_DIR / "assets"
 LWC_JS_PATH = ASSETS_DIR / "lightweight-charts.standalone.production.js"
 DEFAULTS_PATH = ASSETS_DIR / "defaults.json"
+WATCHLIST_PATH = Path.home() / ".crypto_quant_watchlist.json"
 
 VALID_STRATEGIES = {
     "none",
@@ -56,6 +59,66 @@ VALID_STRATEGIES = {
     "rsi_meanrev",
     "macd_crossover",
 }
+
+
+def _infer_price_precision(price: float) -> int:
+    ap = abs(price)
+    if 0 < ap < 0.05:
+        return 6
+    if 0 < ap < 1.0:
+        return 5
+    if 0 < ap < 100.0:
+        return 4
+    return 2
+
+
+def _normalize_watchlist_items(items: Any) -> list[dict[str, str]]:
+    if not isinstance(items, list):
+        raise ValueError("symbols 必须是列表")
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in items:
+        if isinstance(item, dict):
+            sym = str(item.get("symbol", "")).strip()
+            label = str(item.get("label") or sym).strip()
+        else:
+            sym = str(item).strip()
+            label = sym
+        if not sym:
+            continue
+        key = sym.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"symbol": sym, "label": label or sym})
+    return out
+
+
+def load_watchlist(defaults: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    if WATCHLIST_PATH.exists():
+        try:
+            raw = json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
+            items = _normalize_watchlist_items(raw.get("symbols") if isinstance(raw, dict) else raw)
+            if items:
+                return items
+        except Exception:
+            pass
+    cfg = defaults or load_defaults()
+    return _normalize_watchlist_items(cfg.get("symbols", []))
+
+
+def save_watchlist(items: Any) -> list[dict[str, str]]:
+    normalized = _normalize_watchlist_items(items)
+    if not normalized:
+        raise ValueError("自选列表不能为空")
+    WATCHLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = WATCHLIST_PATH.with_suffix(".json.tmp")
+    tmp_path.write_text(
+        json.dumps({"symbols": normalized}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(tmp_path, WATCHLIST_PATH)
+    return normalized
 
 
 def load_defaults() -> dict[str, Any]:
@@ -345,27 +408,34 @@ def build_kline_payload(
     prev_close = float(raw_data["prev_close"])
     change = last_price - prev_close
     change_pct = (change / prev_close * 100.0) if prev_close else 0.0
+    precision = _infer_price_precision(last_price)
+
+    meta: dict[str, Any] = {
+        "provider": raw_data.get("provider", "yahoo"),
+        "symbol": raw_data["symbol"],
+        "display_name": raw_data.get("display_name", raw_data["symbol"]),
+        "currency": raw_data.get("currency", "USD"),
+        "exchange": raw_data.get("exchange", ""),
+        "interval": raw_data["interval"],
+        "range": raw_data["range"],
+        "resolved_range": raw_data["resolved_range"],
+        "strategy": strategy,
+        "is_intraday": raw_data["is_intraday"],
+        "price_precision": precision,
+        "last_price": round(last_price, precision),
+        "prev_close": round(prev_close, precision),
+        "change": round(change, precision),
+        "change_pct": round(change_pct, 2),
+        "bar_count": len(bars),
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source": raw_data.get("source", raw_data.get("provider", "yahoo")),
+    }
+    for extra_key in ("high_24h", "low_24h", "quote_volume_24h"):
+        if extra_key in raw_data and raw_data[extra_key] is not None:
+            meta[extra_key] = raw_data[extra_key]
 
     return {
-        "meta": {
-            "provider": raw_data.get("provider", "yahoo"),
-            "symbol": raw_data["symbol"],
-            "display_name": raw_data.get("display_name", raw_data["symbol"]),
-            "currency": raw_data.get("currency", "USD"),
-            "exchange": raw_data.get("exchange", ""),
-            "interval": raw_data["interval"],
-            "range": raw_data["range"],
-            "resolved_range": raw_data["resolved_range"],
-            "strategy": strategy,
-            "is_intraday": raw_data["is_intraday"],
-            "last_price": round(last_price, 4),
-            "prev_close": round(prev_close, 4),
-            "change": round(change, 4),
-            "change_pct": round(change_pct, 2),
-            "bar_count": len(bars),
-            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source": raw_data.get("source", raw_data.get("provider", "yahoo")),
-        },
+        "meta": meta,
         "candles": candles,
         "volume": volume,
         "indicators": {
@@ -412,7 +482,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
     .group { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
     .divider { width: 1px; height: 20px; background: var(--border); }
-    .brand { font-weight: 700; color: var(--accent); letter-spacing: 0.3px; margin-right: 4px; white-space: nowrap; }
     button, select, input[type="text"] {
       background: #2a2e39; color: var(--text); border: 1px solid #363a45;
       border-radius: 4px; padding: 4px 8px; font-size: 12px; outline: none;
@@ -430,6 +499,66 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       padding: 2px 6px; border-radius: 4px; user-select: none;
     }
     label.chk:hover { background: #2a2e39; }
+    .workspace { display: flex; flex: 1 1 auto; min-height: 0; width: 100%; }
+    .sidebar {
+      width: 262px; flex-shrink: 0; background: #161a25;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; min-height: 0;
+    }
+    .sidebar.hidden { display: none; }
+    .wl-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px; border-bottom: 1px solid var(--border); font-weight: 600;
+    }
+    .wl-title { display: flex; align-items: center; gap: 6px; color: #fff; font-size: 12px; }
+    .wl-badge {
+      background: #2a2e39; color: var(--muted); border-radius: 10px;
+      padding: 1px 7px; font-size: 11px; font-weight: 500;
+    }
+    .wl-add-row {
+      display: flex; gap: 6px; padding: 8px 10px;
+      border-bottom: 1px solid var(--border); background: #1a1e2b;
+    }
+    .wl-add-row input { flex: 1 1 auto; width: auto; min-width: 0; }
+    .wl-list { flex: 1 1 auto; overflow-y: auto; padding: 4px 0; }
+    .wl-list::-webkit-scrollbar { width: 6px; }
+    .wl-list::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 3px; }
+    .wl-item {
+      display: flex; flex-direction: column; gap: 3px;
+      padding: 8px 12px; cursor: pointer; border-left: 3px solid transparent;
+      border-bottom: 1px solid rgba(42, 46, 57, 0.45);
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .wl-item:hover { background: rgba(42, 46, 57, 0.55); }
+    .wl-item.active {
+      background: rgba(240, 185, 11, 0.09);
+      border-left-color: var(--accent);
+    }
+    .wl-row-top, .wl-row-bot {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    }
+    .wl-label-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .wl-label { font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wl-prov {
+      font-size: 10px; padding: 0 4px; border-radius: 3px;
+      background: #2a2e39; color: var(--muted); text-transform: uppercase; flex-shrink: 0;
+    }
+    .wl-price { font-weight: 600; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text); }
+    .wl-sym { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wl-right-bot { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .wl-chg {
+      font-size: 11px; font-variant-numeric: tabular-nums; font-weight: 600;
+      padding: 1px 5px; border-radius: 3px;
+    }
+    .wl-chg.up { background: rgba(38, 166, 154, 0.14); color: var(--up); }
+    .wl-chg.down { background: rgba(239, 83, 80, 0.14); color: var(--down); }
+    .wl-del {
+      opacity: 0; background: transparent; border: none; color: var(--muted);
+      padding: 0 4px; font-size: 14px; line-height: 1;
+    }
+    .wl-item:hover .wl-del { opacity: 1; }
+    .wl-del:hover { color: var(--down); background: transparent !important; }
+    .main-pane { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
     .status-bar {
       display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
       gap: 8px; padding: 6px 14px; background: #161a25;
@@ -469,18 +598,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <div class="app">
     <div class="toolbar">
-      <span class="brand" id="brand-title">__PAGE_TITLE__</span>
-      <div class="group" id="symbol-buttons"></div>
       <div class="group">
         <select id="provider-select" title="数据源适配器">
           <option value="auto">源: 自动推断</option>
+          <option value="binance">Binance (实时)</option>
+          <option value="gate">Gate.io (现货实时)</option>
+          <option value="okx">OKX (实时)</option>
           <option value="yahoo">Yahoo Finance</option>
           <option value="eastmoney">东方财富 (A股/港股)</option>
-          <option value="binance">Binance (实时)</option>
-          <option value="okx">OKX (实时)</option>
           <option value="alpaca">Alpaca</option>
         </select>
-        <input type="text" id="custom-symbol" placeholder="代码如 600519 / AAPL" />
+        <input type="text" id="custom-symbol" placeholder="代码如 TAUSDT / SOLUSDT" />
         <button id="btn-load-symbol">加载</button>
       </div>
       <div class="divider"></div>
@@ -527,27 +655,43 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <div class="status-bar">
-      <div class="quote-info">
-        <span class="provider-tag" id="hdr-provider">--</span>
-        <span class="sym-title" id="hdr-symbol">--</span>
-        <span class="price-big" id="hdr-price">--</span>
-        <span id="hdr-change">--</span>
-        <div class="ohlcv-legend" id="ohlcv-legend"></div>
-      </div>
-      <div class="live-badge">
-        <span class="dot" id="live-dot"></span>
-        <span id="live-text">初始化中...</span>
-      </div>
-    </div>
+    <div class="workspace">
+      <aside class="sidebar" id="sidebar">
+        <div class="wl-header">
+          <span class="wl-title">自选标的 <span class="wl-badge" id="wl-count">0</span></span>
+          <button id="wl-refresh-btn" title="刷新自选行情" style="padding:2px 6px;font-size:11px;">刷新行情</button>
+        </div>
+        <div class="wl-add-row">
+          <input type="text" id="wl-add-input" placeholder="添加代码如 TAUSDT" />
+          <button id="wl-add-btn">+ 添加</button>
+        </div>
+        <div class="wl-list" id="watchlist-items"></div>
+      </aside>
 
-    <div class="chart-wrap">
-      <div id="chart"></div>
-      <div class="error-banner" id="error-banner"></div>
+      <div class="main-pane">
+        <div class="status-bar">
+          <div class="quote-info">
+            <span class="provider-tag" id="hdr-provider">--</span>
+            <span class="sym-title" id="hdr-symbol">--</span>
+            <span class="price-big" id="hdr-price">--</span>
+            <span id="hdr-change">--</span>
+            <div class="ohlcv-legend" id="ohlcv-legend"></div>
+          </div>
+          <div class="live-badge">
+            <span class="dot" id="live-dot"></span>
+            <span id="live-text">初始化中...</span>
+          </div>
+        </div>
+
+        <div class="chart-wrap">
+          <div id="chart"></div>
+          <div class="error-banner" id="error-banner"></div>
+        </div>
+      </div>
     </div>
 
     <div class="hint-footer">
-      <span>支持全市场代码: 600519.SH / 00700.HK / AAPL / GC=F / BTCUSDT | 滚轮缩放 & 拖拽平移</span>
+      <span>支持代码: BTCUSDT / TAUSDT / okx:BTC-USDT / yahoo:IBIT / COIN / MSTR | 滚轮缩放 & 拖拽平移</span>
       <span id="meta-summary">--</span>
     </div>
   </div>
@@ -567,12 +711,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       refreshSec: Number(APP_CONFIG.refresh || 0),
       colorScheme: APP_CONFIG.color_scheme || "green_up",
       isStatic: APP_CONFIG.mode === "static",
+      watchlist: Array.isArray(APP_CONFIG.symbols) ? [...APP_CONFIG.symbols] : [],
+      quotesBySpec: {},
+      sidebarVisible: APP_CONFIG.mode !== "static",
+      pricePrecision: 2,
       lastKey: "",
       lastPayload: null,
       lastCrosshairBar: null,
       lastCrosshairVol: null,
       timerId: null,
-      loading: false,
+      activeRequestId: 0,
+      abortCtrl: null,
+      quotesLoading: false,
     };
 
     const chartEl = document.getElementById("chart");
@@ -625,6 +775,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       });
     }
 
+    function inferPrecision(val) {
+      const av = Math.abs(Number(val));
+      if (!Number.isFinite(av) || av === 0) return 4;
+      if (av < 0.05) return 6;
+      if (av < 1) return 5;
+      if (av < 100) return 4;
+      return 2;
+    }
+
+    function fmtNum(val, prec) {
+      const n = Number(val);
+      if (!Number.isFinite(n)) return "--";
+      return n.toFixed(prec != null ? prec : inferPrecision(n));
+    }
+
     function applyColorScheme(recolorExisting) {
       const c = getColors();
       document.documentElement.style.setProperty("--up", c.up);
@@ -643,26 +808,159 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const vols = state.lastPayload.volume;
         updateLegend(state.lastCrosshairBar || bars[bars.length - 1], state.lastCrosshairVol || vols[vols.length - 1]);
       }
+      renderWatchlist();
     }
 
-    function renderToolbar() {
-      const symBox = document.getElementById("symbol-buttons");
-      symBox.innerHTML = "";
-      (APP_CONFIG.symbols || []).forEach((item) => {
-        const btn = document.createElement("button");
-        btn.textContent = item.label;
-        btn.title = item.symbol;
-        if (item.symbol.toUpperCase() === state.symbol.toUpperCase()) btn.classList.add("active");
-        if (state.isStatic) btn.disabled = true;
-        btn.onclick = () => {
+    function syncSidebarVisibility() {
+      const sb = document.getElementById("sidebar");
+      if (state.isStatic || !state.sidebarVisible) {
+        sb.classList.add("hidden");
+      } else {
+        sb.classList.remove("hidden");
+      }
+    }
+
+    function renderWatchlist() {
+      const box = document.getElementById("watchlist-items");
+      document.getElementById("wl-count").textContent = String(state.watchlist.length);
+      box.innerHTML = "";
+      state.watchlist.forEach((item, idx) => {
+        const q = state.quotesBySpec[item.symbol] || state.quotesBySpec[item.symbol.toUpperCase()];
+        const isActive = item.symbol.toUpperCase() === state.symbol.toUpperCase();
+        const row = document.createElement("div");
+        row.className = "wl-item" + (isActive ? " active" : "");
+
+        const provText = (q && q.provider) ? q.provider : (item.symbol.includes(":") ? item.symbol.split(":")[0] : "auto");
+        const priceStr = (q && q.last_price != null) ? fmtNum(q.last_price) : "--";
+        const chgVal = (q && q.change_pct != null) ? Number(q.change_pct) : null;
+        const chgCls = chgVal == null ? "" : (chgVal >= 0 ? "up" : "down");
+        const chgStr = chgVal == null ? "--" : `${chgVal >= 0 ? "+" : ""}${chgVal.toFixed(2)}%`;
+
+        row.innerHTML =
+          `<div class="wl-row-top">` +
+            `<div class="wl-label-wrap">` +
+              `<span class="wl-label"></span>` +
+              `<span class="wl-prov">${provText}</span>` +
+            `</div>` +
+            `<span class="wl-price">${priceStr}</span>` +
+          `</div>` +
+          `<div class="wl-row-bot">` +
+            `<span class="wl-sym"></span>` +
+            `<div class="wl-right-bot">` +
+              `<span class="wl-chg ${chgCls}">${chgStr}</span>` +
+              `<button class="wl-del" title="移除">×</button>` +
+            `</div>` +
+          `</div>`;
+
+        row.querySelector(".wl-label").textContent = item.label || item.symbol;
+        row.querySelector(".wl-sym").textContent = item.symbol;
+
+        row.onclick = () => {
           state.symbol = item.symbol;
           state.provider = "auto";
           document.getElementById("custom-symbol").value = "";
           renderToolbar();
+          renderWatchlist();
           fetchAndRender(false);
         };
-        symBox.appendChild(btn);
+
+        row.querySelector(".wl-del").onclick = async (ev) => {
+          ev.stopPropagation();
+          if (state.watchlist.length <= 1) {
+            showError("自选列表至少保留 1 个标的");
+            return;
+          }
+          const next = state.watchlist.filter((_, i) => i !== idx);
+          state.watchlist = next;
+          if (isActive && next.length) {
+            state.symbol = next[0].symbol;
+            state.provider = "auto";
+            fetchAndRender(false);
+          }
+          renderWatchlist();
+          await saveWatchlistRemote(next);
+        };
+
+        box.appendChild(row);
       });
+    }
+
+    async function saveWatchlistRemote(items) {
+      try {
+        const resp = await fetch("/api/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbols: items }),
+        });
+        const data = await resp.json();
+        if (resp.ok && Array.isArray(data.symbols)) {
+          state.watchlist = data.symbols;
+        }
+      } catch (_) {}
+    }
+
+    async function fetchWatchlistQuotes() {
+      if (state.isStatic || state.quotesLoading || !state.watchlist.length) return;
+      state.quotesLoading = true;
+      try {
+        const syms = state.watchlist.map((it) => it.symbol).join(",");
+        const resp = await fetch(`/api/quotes?symbols=${encodeURIComponent(syms)}`);
+        const data = await resp.json();
+        if (resp.ok && Array.isArray(data.quotes)) {
+          data.quotes.forEach((q) => {
+            if (q && q.symbol_spec && !q.error) {
+              state.quotesBySpec[q.symbol_spec] = q;
+              state.quotesBySpec[q.symbol_spec.toUpperCase()] = q;
+            }
+          });
+          renderWatchlist();
+        }
+      } catch (_) {
+      } finally {
+        state.quotesLoading = false;
+      }
+    }
+
+    async function addSymbolToWatchlist(rawInput) {
+      const raw = rawInput.trim();
+      if (!raw) return;
+      const btn = document.getElementById("wl-add-btn");
+      btn.disabled = true;
+      btn.textContent = "...";
+      try {
+        const chosenProv = document.getElementById("provider-select").value;
+        const spec = (!raw.includes(":") && chosenProv && chosenProv !== "auto") ? `${chosenProv}:${raw}` : raw;
+        const resp = await fetch(`/api/quotes?symbols=${encodeURIComponent(spec)}`);
+        const data = await resp.json();
+        const q = (data.quotes && data.quotes[0]) ? data.quotes[0] : null;
+        if (!resp.ok || !q || q.error) {
+          throw new Error((q && q.error) || data.error || `无法识别标的 ${raw}`);
+        }
+        const canonical = q.resolved_spec || spec;
+        const label = q.display_name || raw.toUpperCase();
+        state.quotesBySpec[canonical] = q;
+        state.quotesBySpec[canonical.toUpperCase()] = q;
+        const exists = state.watchlist.find((it) => it.symbol.toUpperCase() === canonical.toUpperCase());
+        if (!exists) {
+          state.watchlist = [...state.watchlist, { symbol: canonical, label }];
+          await saveWatchlistRemote(state.watchlist);
+        }
+        state.symbol = canonical;
+        state.provider = "auto";
+        document.getElementById("wl-add-input").value = "";
+        renderToolbar();
+        renderWatchlist();
+        await fetchAndRender(false);
+      } catch (err) {
+        showError(`添加自选失败: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "+ 添加";
+      }
+    }
+
+    function renderToolbar() {
+      syncSidebarVisibility();
 
       const intBox = document.getElementById("interval-buttons");
       intBox.innerHTML = "";
@@ -695,12 +993,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     function updateLegend(bar, volBar) {
       if (!bar) return;
       const cls = bar.close >= bar.open ? "up" : "down";
+      const p = state.pricePrecision;
       const volTxt = volBar && volBar.value ? Number(volBar.value).toLocaleString() : "-";
       document.getElementById("ohlcv-legend").innerHTML =
-        `<span><b>O</b><span class="${cls}">${bar.open}</span></span>` +
-        `<span><b>H</b><span class="${cls}">${bar.high}</span></span>` +
-        `<span><b>L</b><span class="${cls}">${bar.low}</span></span>` +
-        `<span><b>C</b><span class="${cls}">${bar.close}</span></span>` +
+        `<span><b>O</b><span class="${cls}">${fmtNum(bar.open, p)}</span></span>` +
+        `<span><b>H</b><span class="${cls}">${fmtNum(bar.high, p)}</span></span>` +
+        `<span><b>L</b><span class="${cls}">${fmtNum(bar.low, p)}</span></span>` +
+        `<span><b>C</b><span class="${cls}">${fmtNum(bar.close, p)}</span></span>` +
         `<span><b>V</b>${volTxt}</span>`;
     }
 
@@ -757,17 +1056,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         : `${meta.symbol} · ${meta.interval} (${meta.resolved_range})`;
       document.getElementById("hdr-symbol").textContent = titleText;
 
+      const p = Number(meta.price_precision || inferPrecision(meta.last_price));
+      state.pricePrecision = p;
+      const minMove = Number(Math.pow(10, -p).toFixed(p));
+      candleSeries.applyOptions({
+        priceFormat: { type: "price", precision: p, minMove },
+      });
+
       const priceEl = document.getElementById("hdr-price");
       const chgEl = document.getElementById("hdr-change");
       const upDown = meta.change >= 0 ? "up" : "down";
       const sign = meta.change >= 0 ? "+" : "";
-      priceEl.textContent = `${meta.last_price} ${meta.currency || ""}`.trim();
+      priceEl.textContent = `${fmtNum(meta.last_price, p)} ${meta.currency || ""}`.trim();
       priceEl.className = `price-big ${upDown}`;
-      chgEl.textContent = `${sign}${meta.change} (${sign}${meta.change_pct}%)`;
+      chgEl.textContent = `${sign}${fmtNum(meta.change, p)} (${sign}${meta.change_pct}%)`;
       chgEl.className = upDown;
 
+      const hiLoStr = (meta.high_24h != null && meta.low_24h != null)
+        ? ` | 24h高低: ${fmtNum(meta.high_24h, p)} / ${fmtNum(meta.low_24h, p)}`
+        : "";
       document.getElementById("meta-summary").textContent =
-        `K线: ${meta.bar_count} 根 | 信号: ${payload.markers.length} 次 | 数据源: ${meta.source} | 更新于: ${meta.updated_at}`;
+        `K线: ${meta.bar_count} 根 | 信号: ${payload.markers.length} 次${hiLoStr} | 数据源: ${meta.source} | 更新于: ${meta.updated_at}`;
 
       const prevCandles = state.lastPayload ? state.lastPayload.candles : [];
       const newCandles = payload.candles;
@@ -817,34 +1126,62 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function fetchAndRender(isTimerRefresh) {
-      if (state.isStatic || state.loading) return;
-      state.loading = true;
+      if (state.isStatic) return;
+      if (isTimerRefresh && state.abortCtrl) return;
+      if (!isTimerRefresh && state.abortCtrl) {
+        state.abortCtrl.abort();
+      }
+      const ctrl = new AbortController();
+      state.abortCtrl = ctrl;
+      const reqId = ++state.activeRequestId;
+      const reqSymbol = state.symbol;
+
       try {
         const qs = new URLSearchParams({
-          symbol: state.symbol,
+          symbol: reqSymbol,
           provider: state.provider,
           interval: state.interval,
           range: state.range,
           strategy: state.strategy,
         });
-        const resp = await fetch(`/api/kline?${qs.toString()}`);
+        const resp = await fetch(`/api/kline?${qs.toString()}`, { signal: ctrl.signal });
         const data = await resp.json();
+        if (reqId !== state.activeRequestId) return;
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
         applyPayload(data, isTimerRefresh);
       } catch (err) {
-        setLiveStatus("error", `拉取失败: ${err.message}`);
-        showError(`拉取 ${state.symbol} 失败: ${err.message}`);
+        if (err && err.name === "AbortError") return;
+        if (reqId !== state.activeRequestId) return;
+        const isConnErr = err && (err.name === "TypeError" || /failed to fetch|networkerror/i.test(String(err.message)));
+        const msg = isConnErr
+          ? "本地服务已断开（如用命令行启动请勿关闭终端；推荐双击 launch_client.bat）"
+          : `拉取 ${reqSymbol} 失败: ${err.message}`;
+        setLiveStatus("error", isConnErr ? "本地服务已断开" : `拉取失败: ${err.message}`);
+        showError(msg);
       } finally {
-        state.loading = false;
+        if (reqId === state.activeRequestId) {
+          state.abortCtrl = null;
+        }
       }
     }
 
     function resetTimer() {
       if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
       if (!state.isStatic && state.refreshSec > 0) {
-        state.timerId = setInterval(() => fetchAndRender(true), state.refreshSec * 1000);
+        state.timerId = setInterval(() => {
+          fetchAndRender(true);
+          fetchWatchlistQuotes();
+        }, state.refreshSec * 1000);
       }
     }
+
+    document.getElementById("wl-refresh-btn").onclick = () => fetchWatchlistQuotes();
+    document.getElementById("wl-add-btn").onclick = () => {
+      addSymbolToWatchlist(document.getElementById("wl-add-input").value);
+    };
+    document.getElementById("wl-add-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("wl-add-btn").click();
+    });
 
     document.getElementById("btn-load-symbol").onclick = () => {
       const val = document.getElementById("custom-symbol").value.trim();
@@ -852,6 +1189,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       state.symbol = val;
       state.provider = document.getElementById("provider-select").value;
       renderToolbar();
+      renderWatchlist();
       fetchAndRender(false);
     };
     document.getElementById("custom-symbol").addEventListener("keydown", (e) => {
@@ -871,7 +1209,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         else setLiveStatus("paused", `已暂停自动刷新 · ${state.lastPayload.meta.updated_at}`);
       }
     };
-    document.getElementById("btn-refresh").onclick = () => fetchAndRender(true);
+    document.getElementById("btn-refresh").onclick = () => {
+      fetchAndRender(true);
+      fetchWatchlistQuotes();
+    };
     document.getElementById("btn-fit").onclick = () => chart.timeScale().fitContent();
     document.getElementById("btn-color-scheme").onclick = () => {
       state.colorScheme = state.colorScheme === "green_up" ? "red_up" : "green_up";
@@ -883,8 +1224,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     applyColorScheme(false);
     renderToolbar();
+    renderWatchlist();
     if (INITIAL_PAYLOAD) applyPayload(INITIAL_PAYLOAD, false);
-    else fetchAndRender(false);
+    else {
+      fetchAndRender(false);
+      fetchWatchlistQuotes();
+    }
     resetTimer();
   </script>
 </body>
@@ -923,7 +1268,11 @@ def render_html(
 
 # ── 本地 HTTP 实时看板服务 ────────────────────────────────────────────────────
 
-def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
+def make_handler(
+    defaults: dict[str, Any],
+    app_config: dict[str, Any],
+    shutdown_callback: Callable[[], None] | None = None,
+):
     default_provider = defaults.get("default_provider", "yahoo")
 
     class KlineHandler(BaseHTTPRequestHandler):
@@ -938,12 +1287,21 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
             self.end_headers()
             self.wfile.write(body)
 
+        def _send_json(self, status: int, obj: Any) -> None:
+            self._send_bytes(
+                status,
+                "application/json; charset=utf-8",
+                json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+            )
+
         def do_GET(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path
 
             if path == "/":
-                html = render_html(app_config, initial_payload=None, inline_lwc=False)
+                live_cfg = dict(app_config)
+                live_cfg["symbols"] = load_watchlist(defaults)
+                html = render_html(live_cfg, initial_payload=None, inline_lwc=False)
                 self._send_bytes(200, "text/html; charset=utf-8", html.encode("utf-8"))
                 return
 
@@ -952,6 +1310,28 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
                     self._send_bytes(404, "text/plain; charset=utf-8", b"Lightweight Charts bundle not found")
                     return
                 self._send_bytes(200, "application/javascript; charset=utf-8", LWC_JS_PATH.read_bytes())
+                return
+
+            if path == "/api/health":
+                self._send_json(200, {"ok": True, "mode": app_config.get("mode", "live")})
+                return
+
+            if path == "/api/watchlist":
+                self._send_json(200, {"symbols": load_watchlist(defaults)})
+                return
+
+            if path == "/api/quotes":
+                qs = urllib.parse.parse_qs(parsed.query)
+                raw_syms = (qs.get("symbols", [""])[0] or "").strip()
+                if raw_syms:
+                    items: list[dict[str, str] | str] = [s.strip() for s in raw_syms.split(",") if s.strip()]
+                else:
+                    items = load_watchlist(defaults)
+                quotes = providers.fetch_quotes_batch(items, default_provider=default_provider)
+                self._send_json(
+                    200,
+                    {"quotes": quotes, "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                )
                 return
 
             if path == "/api/kline":
@@ -971,23 +1351,36 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
                         default_provider=default_provider,
                     )
                     payload = build_kline_payload(raw_data, strategy=strategy, defaults=defaults)
-                    self._send_bytes(
-                        200,
-                        "application/json; charset=utf-8",
-                        json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                    )
+                    self._send_json(200, payload)
                 except ValueError as exc:
-                    self._send_bytes(
-                        400,
-                        "application/json; charset=utf-8",
-                        json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"),
-                    )
+                    self._send_json(400, {"error": str(exc)})
                 except Exception as exc:
-                    self._send_bytes(
-                        502,
-                        "application/json; charset=utf-8",
-                        json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"),
-                    )
+                    self._send_json(502, {"error": str(exc)})
+                return
+
+            self._send_bytes(404, "text/plain; charset=utf-8", b"Not Found")
+
+        def do_POST(self) -> None:
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+
+            if path == "/api/watchlist":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = self.rfile.read(length) if length > 0 else b"{}"
+                    data = json.loads(body.decode("utf-8"))
+                    saved = save_watchlist(data.get("symbols") if isinstance(data, dict) else data)
+                    self._send_json(200, {"symbols": saved})
+                except Exception as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
+
+            if path == "/api/shutdown":
+                if shutdown_callback is None:
+                    self._send_json(404, {"error": "shutdown endpoint disabled"})
+                    return
+                self._send_json(200, {"ok": True})
+                threading.Timer(0.1, shutdown_callback).start()
                 return
 
             self._send_bytes(404, "text/plain; charset=utf-8", b"Not Found")

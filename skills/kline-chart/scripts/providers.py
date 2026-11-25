@@ -31,6 +31,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -45,7 +46,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-VALID_PROVIDERS = {"yahoo", "eastmoney", "binance", "okx", "alpaca", "csv"}
+VALID_PROVIDERS = {"yahoo", "eastmoney", "binance", "gate", "okx", "alpaca", "csv"}
 VALID_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
 INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h"}
 VALID_RANGES = {"auto", "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
@@ -71,6 +72,7 @@ BINANCE_HOSTS = [
     "https://data-api.binance.vision",
     "https://api.binance.com",
 ]
+GATE_BASE_URL = "https://api.gateio.ws/api/v4/spot"
 EASTMONEY_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 OKX_URL = "https://www.okx.com/api/v5/market/candles"
 
@@ -80,6 +82,7 @@ _CN_TZ = timezone(timedelta(hours=8))
 
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[tuple[str, str, str, str, str], tuple[float, dict[str, Any]]] = {}
+_QUOTE_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 CACHE_TTL_SECONDS = 3.0
 
 
@@ -472,6 +475,36 @@ _CRYPTO_LIMIT_MAP = {
 }
 
 
+def _is_http_4xx(exc: Exception) -> bool:
+    resp = getattr(exc, "response", None)
+    if resp is not None and getattr(resp, "status_code", None) is not None:
+        return 400 <= int(resp.status_code) < 500
+    code = getattr(exc, "code", None)
+    return code is not None and 400 <= int(code) < 500
+
+
+def _binance_get_json(path: str, params: dict[str, Any], timeout: int = 6) -> dict[str, Any] | list[Any]:
+    """优先使用 data-api.binance.vision（遇瞬时 SSL 断流自动重试，遇 4xx 立即终止不等待死节点）。"""
+    attempts = [
+        ("https://data-api.binance.vision", timeout, None),
+        ("https://data-api.binance.vision", timeout, {"Connection": "close"}),
+        ("https://data-api.binance.vision", timeout, {"Connection": "close"}),
+        ("https://api.binance.com", 4, {"Connection": "close"}),
+    ]
+    primary_err: Exception | None = None
+    for idx, (host, t_sec, extra_hdrs) in enumerate(attempts):
+        try:
+            return _http_get_json(f"{host}{path}", params=params, headers=extra_hdrs, timeout=t_sec)
+        except Exception as exc:
+            if primary_err is None:
+                primary_err = exc
+            if _is_http_4xx(exc):
+                raise
+            if idx < len(attempts) - 1:
+                time.sleep(0.15)
+    raise RuntimeError(str(primary_err))
+
+
 def fetch_binance_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
     if interval not in _BN_INTERVAL_MAP:
         raise ValueError(f"Binance 不支持周期 '{interval}'，可选: {sorted(_BN_INTERVAL_MAP)}")
@@ -480,22 +513,17 @@ def fetch_binance_ohlcv(symbol: str, interval: str = "1h", range_str: str | None
     resolved_range = resolve_range(interval, range_str)
     limit = min(_CRYPTO_LIMIT_MAP.get(resolved_range, 300), 1000)
 
-    rows: list[Any] | None = None
-    last_err: Exception | None = None
-    for host in BINANCE_HOSTS:
-        try:
-            raw = _http_get_json(
-                f"{host}/api/v3/klines",
-                params={"symbol": sym, "interval": _BN_INTERVAL_MAP[interval], "limit": limit},
-            )
-            if isinstance(raw, list):
-                rows = raw
-                break
-        except Exception as exc:
-            last_err = exc
+    try:
+        raw = _binance_get_json(
+            "/api/v3/klines",
+            params={"symbol": sym, "interval": _BN_INTERVAL_MAP[interval], "limit": limit},
+        )
+    except Exception as exc:
+        raise RuntimeError(f"请求 Binance 失败 ({sym}): {exc}") from exc
 
-    if rows is None:
-        raise RuntimeError(f"请求 Binance 失败 ({sym}): {last_err}")
+    if not isinstance(raw, list):
+        raise RuntimeError(f"Binance 返回格式异常 ({sym})")
+    rows = raw
 
     is_intraday = interval in INTRADAY_INTERVALS
     raw_bars = [
@@ -530,6 +558,122 @@ def fetch_binance_ohlcv(symbol: str, interval: str = "1h", range_str: str | None
         "bars": bars,
         "source": "binance",
     }
+
+
+# ── 3b. Gate.io Spot 适配器（长尾山寨与主流现货） ─────────────────────────────
+
+_GATE_INTERVAL_MAP = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+    "1wk": "7d",
+    "1mo": "30d",
+}
+
+
+def _to_gate_pair(symbol: str) -> str:
+    """将 TAUSDT / TA-USDT / TA/USDT / TA_USDT 统一标准化为 Gate.io 交易对格式 TA_USDT。"""
+    s = symbol.strip().upper().replace("-", "_").replace("/", "_")
+    if "_" in s:
+        parts = [p for p in s.split("_") if p]
+        if len(parts) == 2:
+            return f"{parts[0]}_{parts[1]}"
+        raise ValueError(f"Gate.io 交易对格式无效: {symbol}")
+    for quote in ("USDT", "USDC", "BTC", "ETH"):
+        if s.endswith(quote) and len(s) > len(quote):
+            return f"{s[:-len(quote)]}_{quote}"
+    raise ValueError(f"Gate.io 无法解析交易对 '{symbol}'，请使用如 TA_USDT 或 TAUSDT")
+
+
+def fetch_gate_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
+    if interval not in _GATE_INTERVAL_MAP:
+        raise ValueError(f"Gate.io 不支持周期 '{interval}'，可选: {sorted(_GATE_INTERVAL_MAP)}")
+
+    pair = _to_gate_pair(symbol)
+    resolved_range = resolve_range(interval, range_str)
+    limit = min(_CRYPTO_LIMIT_MAP.get(resolved_range, 300), 500)
+
+    raw = _http_get_json(
+        f"{GATE_BASE_URL}/candlesticks",
+        params={"currency_pair": pair, "interval": _GATE_INTERVAL_MAP[interval], "limit": limit},
+    )
+    if not isinstance(raw, list):
+        raise RuntimeError(f"Gate.io 返回格式异常 ({pair}): {raw}")
+
+    is_intraday = interval in INTRADAY_INTERVALS
+    raw_bars: list[dict[str, Any]] = []
+    for r in raw:
+        if not isinstance(r, list) or len(r) < 6:
+            continue
+        vol_val = r[6] if len(r) >= 7 and _is_finite(r[6]) else r[1]
+        raw_bars.append(
+            {
+                "ts": int(r[0]),
+                "quote_vol": r[1],
+                "close": r[2],
+                "high": r[3],
+                "low": r[4],
+                "open": r[5],
+                "volume": vol_val,
+            }
+        )
+
+    bars = _sanitize_bars(raw_bars, is_intraday=is_intraday)
+    if not bars:
+        raise RuntimeError(f"Gate.io 未返回 {pair} 的有效 K 线")
+
+    last_price = bars[-1]["close"]
+    prev_close = bars[0]["open"]
+    high_24h: float | None = None
+    low_24h: float | None = None
+    quote_vol_24h: float | None = None
+
+    try:
+        tk_raw = _http_get_json(f"{GATE_BASE_URL}/tickers", params={"currency_pair": pair}, timeout=6)
+        if isinstance(tk_raw, list) and tk_raw:
+            tk = tk_raw[0]
+            if _is_finite(tk.get("last")):
+                last_price = float(tk["last"])
+            if _is_finite(tk.get("change_percentage")):
+                pct = float(tk["change_percentage"])
+                if 1.0 + pct / 100.0 > 0:
+                    prev_close = last_price / (1.0 + pct / 100.0)
+            if _is_finite(tk.get("high_24h")):
+                high_24h = float(tk["high_24h"])
+            if _is_finite(tk.get("low_24h")):
+                low_24h = float(tk["low_24h"])
+            if _is_finite(tk.get("quote_volume")):
+                quote_vol_24h = float(tk["quote_volume"])
+    except Exception:
+        pass
+
+    currency = pair.split("_")[-1] if "_" in pair else "USDT"
+    res: dict[str, Any] = {
+        "provider": "gate",
+        "symbol": pair,
+        "display_name": pair.replace("_", "/"),
+        "currency": currency,
+        "exchange": "GATE",
+        "interval": interval,
+        "range": range_str or "auto",
+        "resolved_range": resolved_range,
+        "is_intraday": is_intraday,
+        "last_price": last_price,
+        "prev_close": prev_close,
+        "bars": bars,
+        "source": "gate",
+    }
+    if high_24h is not None:
+        res["high_24h"] = high_24h
+    if low_24h is not None:
+        res["low_24h"] = low_24h
+    if quote_vol_24h is not None:
+        res["quote_volume_24h"] = quote_vol_24h
+    return res
 
 
 # ── 4. OKX 适配器（加密货币 / 黄金代币 XAUT-USDT） ────────────────────────────
@@ -792,6 +936,13 @@ def load_csv_ohlcv(csv_path: str, symbol: str | None = None) -> dict[str, Any]:
 
 # ── 统一调度入口 ──────────────────────────────────────────────────────────────
 
+def _has_explicit_prefix(symbol_spec: str) -> bool:
+    if ":" not in symbol_spec:
+        return False
+    prefix = symbol_spec.split(":", 1)[0].strip().lower()
+    return prefix in VALID_PROVIDERS
+
+
 def fetch_ohlcv(
     symbol_spec: str,
     interval: str = "1h",
@@ -801,10 +952,11 @@ def fetch_ohlcv(
     adjust: str = "qfq",
     use_cache: bool = True,
 ) -> dict[str, Any]:
-    """统一多源拉取入口，支持 ``provider:SYMBOL``、自动路由与 3 秒内存缓存。"""
+    """统一多源拉取入口，支持 ``provider:SYMBOL``、自动路由、Binance→Gate 自动回退与 3 秒内存缓存。"""
     if interval not in VALID_INTERVALS:
         raise ValueError(f"不支持的周期 '{interval}'，可选: {sorted(VALID_INTERVALS)}")
 
+    has_prefix = _has_explicit_prefix(symbol_spec.strip())
     prov, sym = parse_symbol(symbol_spec, explicit_provider=provider, default_provider=default_provider)
     resolved_range = resolve_range(interval, range_str)
     cache_key = (prov, sym, interval, resolved_range, adjust)
@@ -821,7 +973,16 @@ def fetch_ohlcv(
     elif prov == "eastmoney":
         result = fetch_eastmoney_ohlcv(sym, interval=interval, range_str=range_str, adjust=adjust)
     elif prov == "binance":
-        result = fetch_binance_ohlcv(sym, interval=interval, range_str=range_str)
+        allow_fallback = (not has_prefix) and (not provider or provider == "auto")
+        try:
+            result = fetch_binance_ohlcv(sym, interval=interval, range_str=range_str)
+        except Exception:
+            if not allow_fallback:
+                raise
+            result = fetch_gate_ohlcv(sym, interval=interval, range_str=range_str)
+            result["source"] = "gate(auto)"
+    elif prov == "gate":
+        result = fetch_gate_ohlcv(sym, interval=interval, range_str=range_str)
     elif prov == "okx":
         result = fetch_okx_ohlcv(sym, interval=interval, range_str=range_str)
     elif prov == "alpaca":
@@ -836,3 +997,205 @@ def fetch_ohlcv(
             _CACHE[cache_key] = (now, result)
 
     return result
+
+
+# ── 轻量级实时报价与自选批量接口 ──────────────────────────────────────────────
+
+def _fetch_binance_quote(sym: str) -> dict[str, Any]:
+    clean = sym.replace("-", "").replace("/", "").upper()
+    try:
+        raw = _binance_get_json("/api/v3/ticker/24hr", params={"symbol": clean}, timeout=6)
+    except Exception as exc:
+        raise RuntimeError(f"Binance 报价拉取失败 ({clean}): {exc}") from exc
+    if isinstance(raw, dict) and _is_finite(raw.get("lastPrice")):
+        last_p = float(raw["lastPrice"])
+        chg_pct = float(raw.get("priceChangePercent") or 0.0)
+        return {
+            "provider": "binance",
+            "symbol": clean,
+            "display_name": clean,
+            "currency": "USDT" if clean.endswith("USDT") else "USD",
+            "last_price": last_p,
+            "change_pct": round(chg_pct, 2),
+            "high_24h": float(raw["highPrice"]) if _is_finite(raw.get("highPrice")) else None,
+            "low_24h": float(raw["lowPrice"]) if _is_finite(raw.get("lowPrice")) else None,
+            "quote_volume_24h": float(raw["quoteVolume"]) if _is_finite(raw.get("quoteVolume")) else None,
+        }
+    raise RuntimeError(f"Binance 未返回 {clean} 报价")
+
+
+def _fetch_gate_quote(sym: str) -> dict[str, Any]:
+    pair = _to_gate_pair(sym)
+    raw = _http_get_json(f"{GATE_BASE_URL}/tickers", params={"currency_pair": pair}, timeout=6)
+    if not isinstance(raw, list) or not raw or not _is_finite(raw[0].get("last")):
+        raise RuntimeError(f"Gate.io 未返回 {pair} 报价")
+    tk = raw[0]
+    return {
+        "provider": "gate",
+        "symbol": pair,
+        "display_name": pair.replace("_", "/"),
+        "currency": pair.split("_")[-1] if "_" in pair else "USDT",
+        "last_price": float(tk["last"]),
+        "change_pct": round(float(tk.get("change_percentage") or 0.0), 2),
+        "high_24h": float(tk["high_24h"]) if _is_finite(tk.get("high_24h")) else None,
+        "low_24h": float(tk["low_24h"]) if _is_finite(tk.get("low_24h")) else None,
+        "quote_volume_24h": float(tk["quote_volume"]) if _is_finite(tk.get("quote_volume")) else None,
+    }
+
+
+def _fetch_okx_quote(sym: str) -> dict[str, Any]:
+    inst_id = sym.replace("/", "-").upper()
+    if "-" not in inst_id and inst_id.endswith(("USDT", "USDC")):
+        q = "USDT" if inst_id.endswith("USDT") else "USDC"
+        inst_id = f"{inst_id[:-len(q)]}-{q}"
+    raw = _http_get_json("https://www.okx.com/api/v5/market/ticker", params={"instId": inst_id}, timeout=6)
+    if not isinstance(raw, dict) or raw.get("code") != "0" or not raw.get("data"):
+        raise RuntimeError(f"OKX 报价拉取失败 ({inst_id})")
+    tk = raw["data"][0]
+    last_p = float(tk["last"])
+    open_24 = float(tk["open24h"]) if _is_finite(tk.get("open24h")) else last_p
+    chg_pct = ((last_p - open_24) / open_24 * 100.0) if open_24 else 0.0
+    return {
+        "provider": "okx",
+        "symbol": inst_id,
+        "display_name": inst_id,
+        "currency": inst_id.split("-")[-1] if "-" in inst_id else "USDT",
+        "last_price": last_p,
+        "change_pct": round(chg_pct, 2),
+        "high_24h": float(tk["high24h"]) if _is_finite(tk.get("high24h")) else None,
+        "low_24h": float(tk["low24h"]) if _is_finite(tk.get("low24h")) else None,
+        "quote_volume_24h": float(tk["volCcy24h"]) if _is_finite(tk.get("volCcy24h")) else None,
+    }
+
+
+def _fetch_yahoo_quote(sym: str) -> dict[str, Any]:
+    encoded = urllib.parse.quote(sym, safe="")
+    last_err: Exception | None = None
+    for host in YAHOO_HOSTS:
+        try:
+            raw = _http_get_json(f"{host}/v8/finance/chart/{encoded}", params={"interval": "1d", "range": "5d"}, timeout=8)
+            res = ((raw.get("chart") or {}).get("result") or [None])[0] if isinstance(raw, dict) else None
+            if not res:
+                continue
+            meta = res.get("meta") or {}
+            last_p = meta.get("regularMarketPrice")
+            if not _is_finite(last_p):
+                continue
+            last_f = float(last_p)
+            prev_raw = meta.get("chartPreviousClose") or meta.get("previousClose")
+            prev_f = float(prev_raw) if _is_finite(prev_raw) and float(prev_raw) > 0 else last_f
+            chg_pct = ((last_f - prev_f) / prev_f * 100.0) if prev_f else 0.0
+            return {
+                "provider": "yahoo",
+                "symbol": meta.get("symbol", sym),
+                "display_name": meta.get("shortName") or meta.get("symbol", sym),
+                "currency": meta.get("currency", "USD"),
+                "last_price": last_f,
+                "change_pct": round(chg_pct, 2),
+                "high_24h": float(meta["regularMarketDayHigh"]) if _is_finite(meta.get("regularMarketDayHigh")) else None,
+                "low_24h": float(meta["regularMarketDayLow"]) if _is_finite(meta.get("regularMarketDayLow")) else None,
+                "quote_volume_24h": None,
+            }
+        except Exception as exc:
+            last_err = exc
+    raise RuntimeError(f"Yahoo 报价拉取失败 ({sym}): {last_err}")
+
+
+def fetch_quote(
+    symbol_spec: str,
+    provider: str | None = None,
+    default_provider: str = "binance",
+    use_cache: bool = True,
+) -> dict[str, Any]:
+    """拉取单个标的的轻量级实时报价与 24h 涨跌幅（支持 3 秒缓存与 Binance→Gate 自动回退）。"""
+    spec = symbol_spec.strip()
+    has_prefix = _has_explicit_prefix(spec)
+    prov, sym = parse_symbol(spec, explicit_provider=provider, default_provider=default_provider)
+    cache_key = (prov, sym)
+    now = time.time()
+
+    if use_cache:
+        with _CACHE_LOCK:
+            cached = _QUOTE_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                return cached[1]
+
+    if prov == "binance":
+        allow_fallback = (not has_prefix) and (not provider or provider == "auto")
+        try:
+            q = _fetch_binance_quote(sym)
+        except Exception:
+            if not allow_fallback:
+                raise
+            q = _fetch_gate_quote(sym)
+    elif prov == "gate":
+        q = _fetch_gate_quote(sym)
+    elif prov == "okx":
+        q = _fetch_okx_quote(sym)
+    elif prov == "yahoo":
+        q = _fetch_yahoo_quote(sym)
+    else:
+        ohlcv = fetch_ohlcv(spec, interval="1d", range_str="5d", provider=provider, default_provider=default_provider, use_cache=use_cache)
+        last_p = float(ohlcv["last_price"])
+        prev_p = float(ohlcv["prev_close"]) or last_p
+        q = {
+            "provider": ohlcv["provider"],
+            "symbol": ohlcv["symbol"],
+            "display_name": ohlcv.get("display_name", ohlcv["symbol"]),
+            "currency": ohlcv.get("currency", "USD"),
+            "last_price": last_p,
+            "change_pct": round(((last_p - prev_p) / prev_p * 100.0) if prev_p else 0.0, 2),
+            "high_24h": None,
+            "low_24h": None,
+            "quote_volume_24h": None,
+        }
+
+    q["symbol_spec"] = spec
+    q["resolved_spec"] = f"{q['provider']}:{q['symbol']}"
+    if use_cache:
+        with _CACHE_LOCK:
+            _QUOTE_CACHE[cache_key] = (now, q)
+    return q
+
+
+def fetch_quotes_batch(
+    items: list[dict[str, str] | str],
+    default_provider: str = "binance",
+) -> list[dict[str, Any]]:
+    """并发批量拉取自选列表实时报价，保持输入顺序，单个标的异常不阻断其余标的。"""
+    normalized: list[tuple[str, str]] = []
+    for item in items:
+        if isinstance(item, dict):
+            spec = str(item.get("symbol", "")).strip()
+            label = str(item.get("label") or spec).strip()
+        else:
+            spec = str(item).strip()
+            label = spec
+        if spec:
+            normalized.append((spec, label))
+
+    if not normalized:
+        return []
+
+    results: list[dict[str, Any] | None] = [None] * len(normalized)
+
+    def _worker(idx: int, spec: str, label: str) -> tuple[int, dict[str, Any]]:
+        try:
+            q = fetch_quote(spec, default_provider=default_provider)
+            q = dict(q)
+            q["label"] = label
+            return idx, q
+        except Exception as exc:
+            return idx, {
+                "symbol_spec": spec,
+                "label": label,
+                "error": str(exc),
+            }
+
+    with ThreadPoolExecutor(max_workers=min(8, len(normalized))) as pool:
+        futures = [pool.submit(_worker, i, spec, label) for i, (spec, label) in enumerate(normalized)]
+        for fut in as_completed(futures):
+            idx, data = fut.result()
+            results[idx] = data
+
+    return [r for r in results if r is not None]

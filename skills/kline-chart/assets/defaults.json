@@ -1,5 +1,5 @@
 {
-  "title": "加密货币实时 K 线看板",
+  "title": "加密货币桌面行情客户端",
   "default_symbol": "binance:BTCUSDT",
   "default_provider": "binance",
   "default_interval": "15m",
@@ -8,15 +8,12 @@
   "default_refresh_seconds": 5,
   "color_scheme": "green_up",
   "default_host": "127.0.0.1",
-  "default_port": 8765,
+  "default_port": 8766,
   "symbols": [
     {"symbol": "binance:BTCUSDT", "label": "BTC/USDT"},
     {"symbol": "binance:ETHUSDT", "label": "ETH/USDT"},
     {"symbol": "binance:SOLUSDT", "label": "SOL/USDT"},
-    {"symbol": "okx:BTC-USDT", "label": "OKX BTC"},
-    {"symbol": "yahoo:IBIT", "label": "比特币ETF"},
-    {"symbol": "yahoo:COIN", "label": "Coinbase"},
-    {"symbol": "yahoo:MSTR", "label": "MSTR"}
+    {"symbol": "gate:TA_USDT", "label": "TA/USDT"}
   ],
   "indicators": {
     "sma_fast": 20,
