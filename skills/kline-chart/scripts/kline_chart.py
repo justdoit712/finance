@@ -595,7 +595,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       lastKey: "",
       lastPayload: null,
       timerId: null,
-      loading: false,
+      klineAbort: null,
+      tickAbort: null,
+      klineSeq: 0,
+      klineInFlight: false,
     };
 
     const chartEl = document.getElementById("chart");
@@ -797,8 +800,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function fetchAndRender(forceReload) {
-      if (state.isStatic || state.loading) return;
-      state.loading = true;
+      if (state.isStatic) return;
+      if (state.klineAbort) state.klineAbort.abort();
+      if (state.tickAbort) {
+        state.tickAbort.abort();
+        state.tickAbort = null;
+      }
+      const controller = new AbortController();
+      state.klineAbort = controller;
+      const seq = ++state.klineSeq;
+      state.klineInFlight = true;
+      setLiveStatus("", `加载 ${state.symbol} (${state.interval})...`);
       try {
         const qs = new URLSearchParams({
           symbol: state.symbol,
@@ -808,19 +820,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           strategy: state.strategy,
         });
         if (forceReload) qs.set("refresh", "1");
-        const resp = await fetch(`/api/kline?${qs.toString()}`);
+        const resp = await fetch(`/api/kline?${qs.toString()}`, { signal: controller.signal });
         const data = await resp.json();
+        if (seq !== state.klineSeq) return;
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
         applyPayload(data, Boolean(forceReload));
       } catch (err) {
+        if ((err && err.name === "AbortError") || seq !== state.klineSeq) return;
         setLiveStatus("error", `拉取失败: ${err.message}`);
         showError(`拉取 ${state.symbol} 失败: ${err.message}`);
       } finally {
-        state.loading = false;
+        if (seq === state.klineSeq) {
+          state.klineInFlight = false;
+          if (state.klineAbort === controller) state.klineAbort = null;
+        }
       }
     }
 
-    function applyTick(tick) {
+    function applyTick(tick, startSeq) {
+      if (startSeq !== undefined && startSeq !== state.klineSeq) return;
       showError("");
       const meta = tick.meta;
       const key = `${meta.provider}|${meta.symbol}|${meta.interval}|${meta.range}|${meta.strategy}`;
@@ -885,12 +903,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function fetchTick() {
-      if (state.isStatic || state.loading) return;
+      if (state.isStatic || state.klineInFlight) return;
       if (!state.lastPayload) {
         await fetchAndRender(false);
         return;
       }
-      state.loading = true;
+      if (state.tickAbort) state.tickAbort.abort();
+      const controller = new AbortController();
+      state.tickAbort = controller;
+      const startSeq = state.klineSeq;
       try {
         const qs = new URLSearchParams({
           symbol: state.symbol,
@@ -899,15 +920,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           range: state.range,
           strategy: state.strategy,
         });
-        const resp = await fetch(`/api/tick?${qs.toString()}`);
+        const resp = await fetch(`/api/tick?${qs.toString()}`, { signal: controller.signal });
         const data = await resp.json();
+        if (startSeq !== state.klineSeq) return;
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-        applyTick(data);
+        applyTick(data, startSeq);
       } catch (err) {
+        if ((err && err.name === "AbortError") || startSeq !== state.klineSeq) return;
         setLiveStatus("error", `刷新失败: ${err.message}`);
         showError(`刷新 ${state.symbol} 失败: ${err.message}`);
       } finally {
-        state.loading = false;
+        if (state.tickAbort === controller) state.tickAbort = null;
       }
     }
 
@@ -1030,12 +1053,15 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
             pass
 
         def _send_bytes(self, status: int, content_type: str, body: bytes) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                pass
 
         def do_GET(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
