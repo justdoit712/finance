@@ -417,7 +417,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
     .group { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
     .divider { width: 1px; height: 20px; background: var(--border); }
-    .brand { font-weight: 700; color: var(--accent); letter-spacing: 0.3px; margin-right: 4px; white-space: nowrap; }
     button, select, input[type="text"] {
       background: #2a2e39; color: var(--text); border: 1px solid #363a45;
       border-radius: 4px; padding: 4px 8px; font-size: 12px; outline: none;
@@ -474,7 +473,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <div class="app">
     <div class="toolbar">
-      <span class="brand" id="brand-title">__PAGE_TITLE__</span>
       <div class="group" id="symbol-buttons"></div>
       <div class="group">
         <select id="provider-select" title="数据源适配器">
