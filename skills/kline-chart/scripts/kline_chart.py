@@ -71,7 +71,7 @@ def load_defaults() -> dict[str, Any]:
         "default_interval": "1h",
         "default_range": "auto",
         "default_strategy": "sma_crossover",
-        "default_refresh_seconds": 15,
+        "default_refresh_seconds": 30,
         "default_host": "127.0.0.1",
         "default_port": 8765,
         "symbols": [

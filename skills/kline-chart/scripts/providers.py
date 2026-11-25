@@ -35,7 +35,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-VALID_PROVIDERS = {"yahoo", "eastmoney", "binance", "okx", "ratio", "csv"}
+VALID_PROVIDERS = {"yahoo", "eastmoney", "sina", "binance", "okx", "ratio", "csv"}
 VALID_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
 INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h"}
 VALID_RANGES = {"auto", "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
@@ -65,6 +65,7 @@ EASTMONEY_URLS = [
     "http://push2his.eastmoney.com/api/qt/stock/kline/get",
     "https://push2his.eastmoney.com/api/qt/stock/kline/get",
 ]
+SINA_FUTURES_BASE = "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/GlobalFuturesService"
 OKX_URL = "https://www.okx.com/api/v5/market/candles"
 
 _CN_TZ = timezone(timedelta(hours=8))
@@ -104,18 +105,21 @@ _INTL_DISPLAY_NAMES = {
 
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[tuple[str, str, str, str, str], tuple[float, dict[str, Any]]] = {}
-CACHE_TTL_SECONDS = 3.0
+_STALE_CACHE: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+CACHE_TTL_SECONDS = 12.0
 _GSR_HIST_CACHE: tuple[float, list[float]] | None = None
-_GSR_HIST_TTL_SECONDS = 60.0
+_GSR_HIST_TTL_SECONDS = 300.0
+_EM_COOLDOWN_UNTIL = 0.0
+_EM_COOLDOWN_SECONDS = 120.0
 
 
-def _http_get_json(
+def _http_get_text(
     url: str,
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     timeout: int = 12,
     direct: bool = False,
-) -> dict[str, Any] | list[Any]:
+) -> str:
     hdrs = {"User-Agent": USER_AGENT, "Accept": "application/json", "Connection": "close"}
     if headers:
         hdrs.update(headers)
@@ -128,7 +132,7 @@ def _http_get_json(
                     sess.trust_env = trust_env
                     resp = sess.get(url, params=params, headers=hdrs, timeout=timeout)
                     resp.raise_for_status()
-                    return resp.json()
+                    return resp.text
             except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError) as exc:
                 last_exc = exc
                 continue
@@ -140,9 +144,19 @@ def _http_get_json(
     if direct:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            return resp.read().decode("utf-8", errors="replace")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def _http_get_json(
+    url: str,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 12,
+    direct: bool = False,
+) -> dict[str, Any] | list[Any]:
+    return json.loads(_http_get_text(url, params=params, headers=headers, timeout=timeout, direct=direct))
 
 
 def resolve_range(interval: str, range_str: str | None) -> str:
@@ -430,18 +444,39 @@ def _to_eastmoney_secid(symbol: str) -> tuple[str, str, str, str]:
     )
 
 
+def _try_spot_or_comex_fallback(
+    secid: str, interval: str, range_str: str | None
+) -> dict[str, Any] | None:
+    """当东方财富限流或断连时，自动切换至新浪国际现货或 Yahoo COMEX 连续期货。"""
+    if secid == "122.XAU":
+        return fetch_sina_spot_ohlcv("XAUUSD", interval=interval, range_str=range_str)
+    if secid == "122.XAG":
+        return fetch_sina_spot_ohlcv("XAGUSD", interval=interval, range_str=range_str)
+    if secid == "101.GC00Y" and interval != "4h":
+        return fetch_yahoo_ohlcv("GC=F", interval=interval, range_str=range_str)
+    if secid == "101.SI00Y" and interval != "4h":
+        return fetch_yahoo_ohlcv("SI=F", interval=interval, range_str=range_str)
+    return None
+
+
 def fetch_eastmoney_ohlcv(
     symbol: str,
     interval: str = "1h",
     range_str: str | None = "auto",
     adjust: str = "qfq",
 ) -> dict[str, Any]:
+    global _EM_COOLDOWN_UNTIL
     if interval not in _EM_KLT_MAP:
         raise ValueError(f"国际现货/期货实时接口不支持周期 '{interval}'，可选: {sorted(_EM_KLT_MAP)}")
 
     secid, clean_code, currency, exchange = _to_eastmoney_secid(symbol)
     mkt = secid.split(".", 1)[0]
     is_spot_or_fut = mkt in ("101", "122", "113")
+
+    if time.time() < _EM_COOLDOWN_UNTIL:
+        fb = _try_spot_or_comex_fallback(secid, interval, range_str)
+        if fb is not None:
+            return fb
 
     resolved_range = resolve_range(interval, range_str)
     lmt = _EM_RANGE_LMT.get(resolved_range, 260)
@@ -467,8 +502,15 @@ def fetch_eastmoney_ohlcv(
         except Exception as exc:
             last_err = exc
     if raw is None and last_err is not None:
+        _EM_COOLDOWN_UNTIL = time.time() + _EM_COOLDOWN_SECONDS
+        fb = _try_spot_or_comex_fallback(secid, interval, range_str)
+        if fb is not None:
+            return fb
         raise RuntimeError(f"请求国际现货/期货行情失败 ({symbol}): {last_err}")
     if not isinstance(raw, dict) or not raw.get("data"):
+        fb = _try_spot_or_comex_fallback(secid, interval, range_str)
+        if fb is not None:
+            return fb
         raise RuntimeError(f"未获取到 {symbol} (secid={secid}) 的行情数据")
 
     d = raw["data"]
@@ -525,6 +567,192 @@ def fetch_eastmoney_ohlcv(
         "prev_close": prev_close,
         "bars": bars,
         "source": f"eastmoney({exchange})" if is_spot_or_fut else f"eastmoney({adjust})",
+    }
+
+
+# ── 2.5 新浪国际现货备援适配器（XAUUSD / XAGUSD） ────────────────────────────
+
+_SINA_SPOT_MAP = {
+    "XAUUSD": ("XAU", "伦敦金现货 (XAUUSD)"),
+    "XAUUSD=X": ("XAU", "伦敦金现货 (XAUUSD)"),
+    "XAU": ("XAU", "伦敦金现货 (XAUUSD)"),
+    "SPOT:XAU": ("XAU", "伦敦金现货 (XAUUSD)"),
+    "XAGUSD": ("XAG", "伦敦银现货 (XAGUSD)"),
+    "XAGUSD=X": ("XAG", "伦敦银现货 (XAGUSD)"),
+    "XAG": ("XAG", "伦敦银现货 (XAGUSD)"),
+    "SPOT:XAG": ("XAG", "伦敦银现货 (XAGUSD)"),
+}
+
+_SINA_DAILY_COUNT = {
+    "1d": 10,
+    "5d": 15,
+    "1mo": 30,
+    "3mo": 90,
+    "6mo": 180,
+    "1y": 260,
+    "2y": 520,
+    "5y": 1300,
+    "10y": 2600,
+    "ytd": 260,
+    "max": 5000,
+}
+
+_SINA_BUCKET_SEC = {
+    "1m": 60,
+    "2m": 120,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "1h": 3600,
+}
+
+
+def _parse_sina_jsonp(text: str) -> Any:
+    start = text.find("var=(")
+    end = text.rfind(")")
+    if start < 0 or end <= start:
+        raise RuntimeError("新浪接口返回格式异常")
+    return json.loads(text[start + 5 : end])
+
+
+def fetch_sina_spot_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
+    """新浪国际现货黄金/白银备援源（日线全历史 + 日内分时聚合 K 线）。"""
+    su = symbol.strip().upper()
+    if su not in _SINA_SPOT_MAP:
+        raise ValueError(f"新浪现货适配器仅支持 XAUUSD / XAGUSD，收到 '{symbol}'")
+    sina_sym, display_name = _SINA_SPOT_MAP[su]
+    clean_code = "XAUUSD" if sina_sym == "XAU" else "XAGUSD"
+    resolved_range = resolve_range(interval, range_str)
+    hdrs = {"Referer": "https://finance.sina.com.cn/", "Accept": "*/*"}
+
+    if interval in ("1d", "1wk", "1mo"):
+        txt = _http_get_text(
+            f"{SINA_FUTURES_BASE}.getGlobalFuturesDailyKLine",
+            params={"symbol": sina_sym},
+            headers=hdrs,
+            direct=True,
+        )
+        rows = _parse_sina_jsonp(txt)
+        if not isinstance(rows, list) or not rows:
+            raise RuntimeError(f"新浪未返回 {clean_code} 日线数据")
+
+        keep_n = _SINA_DAILY_COUNT.get(resolved_range, 260)
+        if interval == "1wk":
+            keep_n = max(keep_n, 1300)
+        elif interval == "1mo":
+            keep_n = max(keep_n, 2600)
+        rows = rows[-keep_n:]
+
+        raw_bars: list[dict[str, Any]] = []
+        for r in rows:
+            dt_str = str(r.get("date", ""))[:10]
+            if not dt_str:
+                continue
+            dt = datetime.strptime(dt_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            raw_bars.append(
+                {
+                    "ts": int(dt.timestamp()),
+                    "date_str": dt_str,
+                    "open": r.get("open"),
+                    "high": r.get("high"),
+                    "low": r.get("low"),
+                    "close": r.get("close"),
+                    "volume": r.get("volume", 0),
+                }
+            )
+        bars = _sanitize_bars(raw_bars, is_intraday=False)
+        if interval in ("1wk", "1mo") and bars:
+            grouped: dict[str, dict[str, Any]] = {}
+            for b in bars:
+                dt = datetime.strptime(str(b["time"]), "%Y-%m-%d")
+                g_key = f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]:02d}" if interval == "1wk" else str(b["time"])[:7]
+                cur = grouped.get(g_key)
+                if cur is None:
+                    grouped[g_key] = dict(b)
+                else:
+                    cur["time"] = b["time"]
+                    cur["high"] = max(cur["high"], b["high"])
+                    cur["low"] = min(cur["low"], b["low"])
+                    cur["close"] = b["close"]
+                    cur["volume"] += b["volume"]
+            bars = list(grouped.values())
+
+        if not bars:
+            raise RuntimeError(f"新浪未解析出 {clean_code} 有效日线")
+        prev_close = bars[-2]["close"] if len(bars) >= 2 else bars[0]["open"]
+        return {
+            "provider": "sina",
+            "symbol": clean_code,
+            "display_name": display_name,
+            "currency": "USD",
+            "exchange": "SPOT",
+            "interval": interval,
+            "range": range_str or "auto",
+            "resolved_range": resolved_range,
+            "is_intraday": False,
+            "last_price": bars[-1]["close"],
+            "prev_close": prev_close,
+            "bars": bars,
+            "source": "sina(SPOT)",
+        }
+
+    if interval not in _SINA_BUCKET_SEC:
+        raise ValueError(f"新浪现货备援不支持周期 '{interval}'，可选 1m/5m/15m/30m/1h/1d/1wk/1mo")
+
+    txt = _http_get_text(
+        f"{SINA_FUTURES_BASE}.getGlobalFuturesMinLine",
+        params={"symbol": sina_sym},
+        headers=hdrs,
+        direct=True,
+    )
+    payload = _parse_sina_jsonp(txt)
+    min_rows = (payload.get("minLine_1d") if isinstance(payload, dict) else None) or []
+    if not min_rows:
+        raise RuntimeError(f"新浪未返回 {clean_code} 分时数据")
+
+    prev_close = float(min_rows[0][1]) if len(min_rows[0]) >= 2 and _is_finite(min_rows[0][1]) else None
+    bucket_sec = _SINA_BUCKET_SEC[interval]
+    buckets: dict[int, dict[str, Any]] = {}
+
+    for row in min_rows:
+        if not isinstance(row, list) or len(row) < 6:
+            continue
+        px_raw = row[5] if len(row) >= 10 else row[1]
+        if not _is_finite(px_raw):
+            continue
+        px = float(px_raw)
+        dt_str = str(row[-1]).strip()[:19]
+        try:
+            dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_CN_TZ)
+        except ValueError:
+            continue
+        b_ts = (int(dt.timestamp()) // bucket_sec) * bucket_sec
+        cur = buckets.get(b_ts)
+        if cur is None:
+            buckets[b_ts] = {"ts": b_ts, "open": px, "high": px, "low": px, "close": px, "volume": 0.0}
+        else:
+            cur["high"] = max(cur["high"], px)
+            cur["low"] = min(cur["low"], px)
+            cur["close"] = px
+
+    bars = _sanitize_bars(list(buckets.values()), is_intraday=True)
+    if not bars:
+        raise RuntimeError(f"新浪未解析出 {clean_code} 有效分钟 K 线")
+
+    return {
+        "provider": "sina",
+        "symbol": clean_code,
+        "display_name": display_name,
+        "currency": "USD",
+        "exchange": "SPOT",
+        "interval": interval,
+        "range": range_str or "auto",
+        "resolved_range": "1d",
+        "is_intraday": True,
+        "last_price": bars[-1]["close"],
+        "prev_close": prev_close if prev_close is not None else bars[0]["open"],
+        "bars": bars,
+        "source": "sina(SPOT)",
     }
 
 
@@ -805,8 +1033,8 @@ def load_csv_ohlcv(csv_path: str, symbol: str | None = None) -> dict[str, Any]:
 
 def fetch_gsr_ohlcv(interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
     """基于伦敦金 (XAUUSD) 与伦敦银 (XAGUSD) 对齐时间戳合成金银比 K 线序列。"""
-    xau = fetch_eastmoney_ohlcv("XAUUSD", interval=interval, range_str=range_str)
-    xag = fetch_eastmoney_ohlcv("XAGUSD", interval=interval, range_str=range_str)
+    xau = fetch_ohlcv("XAUUSD", interval=interval, range_str=range_str, use_cache=True)
+    xag = fetch_ohlcv("XAGUSD", interval=interval, range_str=range_str, use_cache=True)
 
     ag_map = {b["time"]: b for b in xag["bars"]}
     bars: list[dict[str, Any]] = []
@@ -864,8 +1092,8 @@ def compute_gsr_snapshot() -> dict[str, Any]:
     if hist_cached and (now - hist_cached[0]) < _GSR_HIST_TTL_SECONDS:
         gsr_hist = hist_cached[1]
     else:
-        xau_1y = fetch_eastmoney_ohlcv("XAUUSD", interval="1d", range_str="1y")
-        xag_1y = fetch_eastmoney_ohlcv("XAGUSD", interval="1d", range_str="1y")
+        xau_1y = fetch_ohlcv("XAUUSD", interval="1d", range_str="1y", use_cache=True)
+        xag_1y = fetch_ohlcv("XAGUSD", interval="1d", range_str="1y", use_cache=True)
         au_map = {b["time"]: b["close"] for b in xau_1y["bars"]}
         ag_map = {b["time"]: b["close"] for b in xag_1y["bars"]}
         common = sorted(set(au_map) & set(ag_map))
@@ -938,23 +1166,34 @@ def fetch_ohlcv(
             if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
                 return cached[1]
 
-    if prov == "yahoo":
-        result = fetch_yahoo_ohlcv(sym, interval=interval, range_str=range_str)
-    elif prov == "eastmoney":
-        result = fetch_eastmoney_ohlcv(sym, interval=interval, range_str=range_str, adjust=adjust)
-    elif prov == "binance":
-        result = fetch_binance_ohlcv(sym, interval=interval, range_str=range_str)
-    elif prov == "okx":
-        result = fetch_okx_ohlcv(sym, interval=interval, range_str=range_str)
-    elif prov == "ratio":
-        result = fetch_gsr_ohlcv(interval=interval, range_str=range_str)
-    elif prov == "csv":
-        result = load_csv_ohlcv(sym)
-    else:
-        raise ValueError(f"未知数据源: {prov}")
+    try:
+        if prov == "yahoo":
+            result = fetch_yahoo_ohlcv(sym, interval=interval, range_str=range_str)
+        elif prov == "eastmoney":
+            result = fetch_eastmoney_ohlcv(sym, interval=interval, range_str=range_str, adjust=adjust)
+        elif prov == "sina":
+            result = fetch_sina_spot_ohlcv(sym, interval=interval, range_str=range_str)
+        elif prov == "binance":
+            result = fetch_binance_ohlcv(sym, interval=interval, range_str=range_str)
+        elif prov == "okx":
+            result = fetch_okx_ohlcv(sym, interval=interval, range_str=range_str)
+        elif prov == "ratio":
+            result = fetch_gsr_ohlcv(interval=interval, range_str=range_str)
+        elif prov == "csv":
+            result = load_csv_ohlcv(sym)
+        else:
+            raise ValueError(f"未知数据源: {prov}")
+    except Exception:
+        if use_cache and prov != "csv":
+            with _CACHE_LOCK:
+                stale = _STALE_CACHE.get(cache_key)
+            if stale is not None:
+                return stale
+        raise
 
     if use_cache and prov != "csv":
         with _CACHE_LOCK:
             _CACHE[cache_key] = (now, result)
+            _STALE_CACHE[cache_key] = result
 
     return result
