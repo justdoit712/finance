@@ -61,7 +61,10 @@ BINANCE_HOSTS = [
     "https://data-api.binance.vision",
     "https://api.binance.com",
 ]
-EASTMONEY_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+EASTMONEY_URLS = [
+    "http://push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+]
 OKX_URL = "https://www.okx.com/api/v5/market/candles"
 
 _CN_TZ = timezone(timedelta(hours=8))
@@ -111,17 +114,33 @@ def _http_get_json(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     timeout: int = 12,
+    direct: bool = False,
 ) -> dict[str, Any] | list[Any]:
-    hdrs = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    hdrs = {"User-Agent": USER_AGENT, "Accept": "application/json", "Connection": "close"}
     if headers:
         hdrs.update(headers)
     if requests is not None:
-        resp = requests.get(url, params=params, headers=hdrs, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()
+        attempts = [False] if direct else [True, False]
+        last_exc: Exception | None = None
+        for trust_env in attempts:
+            try:
+                with requests.Session() as sess:
+                    sess.trust_env = trust_env
+                    resp = sess.get(url, params=params, headers=hdrs, timeout=timeout)
+                    resp.raise_for_status()
+                    return resp.json()
+            except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError) as exc:
+                last_exc = exc
+                continue
+        if last_exc is not None:
+            raise last_exc
     qs = urllib.parse.urlencode(params or {})
     full_url = f"{url}?{qs}" if qs else url
     req = urllib.request.Request(full_url, headers=hdrs)
+    if direct:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -428,18 +447,27 @@ def fetch_eastmoney_ohlcv(
     lmt = _EM_RANGE_LMT.get(resolved_range, 260)
     fqt = "0" if is_spot_or_fut else {"none": "0", "qfq": "1", "hfq": "2"}.get(adjust, "1")
 
-    raw = _http_get_json(
-        EASTMONEY_URL,
-        params={
-            "secid": secid,
-            "fields1": "f1,f2,f3,f4,f5,f6",
-            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
-            "klt": _EM_KLT_MAP[interval],
-            "fqt": fqt,
-            "end": "20500101",
-            "lmt": str(lmt),
-        },
-    )
+    raw: dict[str, Any] | list[Any] | None = None
+    last_err: Exception | None = None
+    em_params = {
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+        "klt": _EM_KLT_MAP[interval],
+        "fqt": fqt,
+        "end": "20500101",
+        "lmt": str(lmt),
+    }
+    em_headers = {"Referer": "https://quote.eastmoney.com/", "Accept": "*/*"}
+    for em_url in EASTMONEY_URLS:
+        try:
+            raw = _http_get_json(em_url, params=em_params, headers=em_headers, direct=True)
+            if isinstance(raw, dict) and raw.get("data"):
+                break
+        except Exception as exc:
+            last_err = exc
+    if raw is None and last_err is not None:
+        raise RuntimeError(f"请求国际现货/期货行情失败 ({symbol}): {last_err}")
     if not isinstance(raw, dict) or not raw.get("data"):
         raise RuntimeError(f"未获取到 {symbol} (secid={secid}) 的行情数据")
 
