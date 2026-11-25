@@ -11,6 +11,7 @@
   "symbols": [
     {"symbol": "XAUUSD", "label": "伦敦金现货"},
     {"symbol": "XAGUSD", "label": "伦敦银现货"},
+    {"symbol": "GSR", "label": "金银比 GSR"},
     {"symbol": "yahoo:GC=F", "label": "COMEX 黄金"},
     {"symbol": "yahoo:SI=F", "label": "COMEX 白银"},
     {"symbol": "yahoo:MGC=F", "label": "微型金期货"},

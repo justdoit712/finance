@@ -77,6 +77,7 @@ def load_defaults() -> dict[str, Any]:
         "symbols": [
             {"symbol": "XAUUSD", "label": "伦敦金现货"},
             {"symbol": "XAGUSD", "label": "伦敦银现货"},
+            {"symbol": "GSR", "label": "金银比 GSR"},
             {"symbol": "yahoo:GC=F", "label": "COMEX 黄金"},
             {"symbol": "yahoo:SI=F", "label": "COMEX 白银"},
             {"symbol": "yahoo:MGC=F", "label": "微型金期货"},
@@ -452,6 +453,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .ohlcv-legend { color: var(--muted); font-variant-numeric: tabular-nums; }
     .ohlcv-legend span { margin-right: 10px; color: var(--text); }
     .ohlcv-legend b { color: var(--muted); font-weight: 500; margin-right: 3px; }
+    .status-right { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .gsr-card {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(240, 185, 11, 0.10); border: 1px solid rgba(240, 185, 11, 0.35);
+      border-radius: 4px; padding: 3px 9px; font-size: 12px; color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .gsr-card:hover:not(:disabled) { background: rgba(240, 185, 11, 0.20); }
+    .gsr-card.extreme {
+      background: rgba(239, 83, 80, 0.14); border-color: rgba(239, 83, 80, 0.55);
+    }
+    .gsr-card.extreme:hover:not(:disabled) { background: rgba(239, 83, 80, 0.24); }
+    .gsr-val { font-weight: 700; color: var(--accent); }
+    .gsr-card.extreme .gsr-val { color: #ff8a80; }
+    .gsr-sub { color: var(--muted); font-size: 11px; }
     .live-badge { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); display: inline-block; }
     .dot.paused { background: var(--muted); }
@@ -536,9 +552,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span id="hdr-change">--</span>
         <div class="ohlcv-legend" id="ohlcv-legend"></div>
       </div>
-      <div class="live-badge">
-        <span class="dot" id="live-dot"></span>
-        <span id="live-text">初始化中...</span>
+      <div class="status-right">
+        <button class="gsr-card" id="gsr-card" style="display:none" title="加载实时金银比 GSR 走势">
+          <span class="gsr-val" id="gsr-val">GSR --</span>
+          <span class="gsr-sub" id="gsr-sub">Z --</span>
+        </button>
+        <div class="live-badge">
+          <span class="dot" id="live-dot"></span>
+          <span id="live-text">初始化中...</span>
+        </div>
       </div>
     </div>
 
@@ -548,7 +570,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <div class="hint-footer">
-      <span>国际金银核心标的: 现货 XAUUSD / XAGUSD | COMEX期货 GC=F / SI=F / MGC=F / 月合约(.CMX) | ETF GLD / SLV / GDX</span>
+      <span>国际金银核心标的: 现货 XAUUSD / XAGUSD | 金银比 GSR | COMEX期货 GC=F / SI=F / MGC=F / 月合约(.CMX) | ETF GLD / SLV / GDX</span>
       <span id="meta-summary">--</span>
     </div>
   </div>
@@ -794,13 +816,46 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    function renderGsrCard(g) {
+      if (!g || typeof g.gsr !== "number") return;
+      const card = document.getElementById("gsr-card");
+      card.style.display = "inline-flex";
+      const zSign = g.z_1y >= 0 ? "+" : "";
+      document.getElementById("gsr-val").textContent = `GSR ${g.gsr.toFixed(2)}`;
+      document.getElementById("gsr-sub").textContent = `Z ${zSign}${g.z_1y.toFixed(2)} · ${g.pct_1y.toFixed(0)}%分位`;
+      if (Math.abs(g.z_1y) >= 2.0) card.classList.add("extreme");
+      else card.classList.remove("extreme");
+      card.title = `伦敦金 ${g.xau} / 伦敦银 ${g.xag} | 近1年均值 ${g.mean_1y} (区间 ${g.min_1y}~${g.max_1y}) | 点击查看 GSR 走势`;
+    }
+
+    async function fetchGsrCard() {
+      if (state.isStatic) return;
+      try {
+        const resp = await fetch("/api/gsr");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.error) renderGsrCard(data);
+      } catch (_) {}
+    }
+
     function resetTimer() {
       if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
       if (!state.isStatic && state.refreshSec > 0) {
-        state.timerId = setInterval(() => fetchAndRender(true), state.refreshSec * 1000);
+        state.timerId = setInterval(() => {
+          fetchAndRender(true);
+          fetchGsrCard();
+        }, state.refreshSec * 1000);
       }
     }
 
+    document.getElementById("gsr-card").onclick = () => {
+      if (state.isStatic) return;
+      state.symbol = "GSR";
+      state.provider = "auto";
+      document.getElementById("custom-symbol").value = "";
+      renderToolbar();
+      fetchAndRender(false);
+    };
     document.getElementById("btn-load-symbol").onclick = () => {
       const val = document.getElementById("custom-symbol").value.trim();
       if (!val) return;
@@ -826,7 +881,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         else setLiveStatus("paused", `已暂停自动刷新 · ${state.lastPayload.meta.updated_at}`);
       }
     };
-    document.getElementById("btn-refresh").onclick = () => fetchAndRender(true);
+    document.getElementById("btn-refresh").onclick = () => { fetchAndRender(true); fetchGsrCard(); };
     document.getElementById("btn-fit").onclick = () => chart.timeScale().fitContent();
     ["chk-sma20", "chk-sma60", "chk-bb", "chk-vol"].forEach((id) => {
       document.getElementById(id).onchange = applyVisibility;
@@ -835,6 +890,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     renderToolbar();
     if (INITIAL_PAYLOAD) applyPayload(INITIAL_PAYLOAD, false);
     else fetchAndRender(false);
+    if (!state.isStatic) fetchGsrCard();
     resetTimer();
   </script>
 </body>
@@ -902,6 +958,22 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
                     self._send_bytes(404, "text/plain; charset=utf-8", b"Lightweight Charts bundle not found")
                     return
                 self._send_bytes(200, "application/javascript; charset=utf-8", LWC_JS_PATH.read_bytes())
+                return
+
+            if path == "/api/gsr":
+                try:
+                    gsr_data = providers.compute_gsr_snapshot()
+                    self._send_bytes(
+                        200,
+                        "application/json; charset=utf-8",
+                        json.dumps(gsr_data, ensure_ascii=False).encode("utf-8"),
+                    )
+                except Exception as exc:
+                    self._send_bytes(
+                        502,
+                        "application/json; charset=utf-8",
+                        json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"),
+                    )
                 return
 
             if path == "/api/kline":

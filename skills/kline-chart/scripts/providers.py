@@ -35,7 +35,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-VALID_PROVIDERS = {"yahoo", "eastmoney", "binance", "okx", "csv"}
+VALID_PROVIDERS = {"yahoo", "eastmoney", "binance", "okx", "ratio", "csv"}
 VALID_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
 INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h"}
 VALID_RANGES = {"auto", "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
@@ -102,6 +102,8 @@ _INTL_DISPLAY_NAMES = {
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[tuple[str, str, str, str, str], tuple[float, dict[str, Any]]] = {}
 CACHE_TTL_SECONDS = 3.0
+_GSR_HIST_CACHE: tuple[float, list[float]] | None = None
+_GSR_HIST_TTL_SECONDS = 60.0
 
 
 def _http_get_json(
@@ -198,6 +200,9 @@ def parse_symbol(
         raise ValueError("标的代码不能为空")
 
     su = s.upper()
+    if su in ("GSR", "XAU/XAG", "XAUXAG", "RATIO:GSR"):
+        return "ratio", "GSR"
+
     if su in _INTL_EM_ALIASES:
         # 避免 Yahoo Finance 对 XAUUSD=X / XAGUSD=X 返回 404
         if explicit_provider and explicit_provider.lower() not in ("", "auto", "yahoo"):
@@ -768,6 +773,117 @@ def load_csv_ohlcv(csv_path: str, symbol: str | None = None) -> dict[str, Any]:
     }
 
 
+# ── 5.5 金银比 (GSR) 合成序列与实时统计 ───────────────────────────────────────
+
+def fetch_gsr_ohlcv(interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
+    """基于伦敦金 (XAUUSD) 与伦敦银 (XAGUSD) 对齐时间戳合成金银比 K 线序列。"""
+    xau = fetch_eastmoney_ohlcv("XAUUSD", interval=interval, range_str=range_str)
+    xag = fetch_eastmoney_ohlcv("XAGUSD", interval=interval, range_str=range_str)
+
+    ag_map = {b["time"]: b for b in xag["bars"]}
+    bars: list[dict[str, Any]] = []
+    for au in xau["bars"]:
+        ag = ag_map.get(au["time"])
+        if not ag:
+            continue
+        if ag["open"] <= 0 or ag["high"] <= 0 or ag["low"] <= 0 or ag["close"] <= 0:
+            continue
+        o = au["open"] / ag["open"]
+        c = au["close"] / ag["close"]
+        r_hi = au["high"] / ag["high"]
+        r_lo = au["low"] / ag["low"]
+        bars.append(
+            {
+                "time": au["time"],
+                "open": round(o, 4),
+                "high": round(max(o, c, r_hi, r_lo), 4),
+                "low": round(min(o, c, r_hi, r_lo), 4),
+                "close": round(c, 4),
+                "volume": 0.0,
+            }
+        )
+
+    if not bars:
+        raise RuntimeError(f"GSR 在周期={interval} 下无有效对齐 K 线")
+
+    last_price = (xau["last_price"] / xag["last_price"]) if xag["last_price"] > 0 else bars[-1]["close"]
+    prev_close = (xau["prev_close"] / xag["prev_close"]) if xag["prev_close"] > 0 else bars[0]["open"]
+
+    return {
+        "provider": "ratio",
+        "symbol": "GSR",
+        "display_name": "金银比 GSR (XAU/XAG)",
+        "currency": "XAU/XAG",
+        "exchange": "SPOT",
+        "interval": interval,
+        "range": range_str or "auto",
+        "resolved_range": xau["resolved_range"],
+        "is_intraday": xau["is_intraday"],
+        "last_price": round(last_price, 4),
+        "prev_close": round(prev_close, 4),
+        "bars": bars,
+        "source": "XAUUSD / XAGUSD",
+    }
+
+
+def compute_gsr_snapshot() -> dict[str, Any]:
+    """计算实时现货金银比及近 1 年历史均值、分位数与 Z-Score。"""
+    global _GSR_HIST_CACHE
+    now = time.time()
+
+    with _CACHE_LOCK:
+        hist_cached = _GSR_HIST_CACHE
+    if hist_cached and (now - hist_cached[0]) < _GSR_HIST_TTL_SECONDS:
+        gsr_hist = hist_cached[1]
+    else:
+        xau_1y = fetch_eastmoney_ohlcv("XAUUSD", interval="1d", range_str="1y")
+        xag_1y = fetch_eastmoney_ohlcv("XAGUSD", interval="1d", range_str="1y")
+        au_map = {b["time"]: b["close"] for b in xau_1y["bars"]}
+        ag_map = {b["time"]: b["close"] for b in xag_1y["bars"]}
+        common = sorted(set(au_map) & set(ag_map))
+        gsr_hist = [au_map[d] / ag_map[d] for d in common if ag_map[d] > 0]
+        if gsr_hist:
+            with _CACHE_LOCK:
+                _GSR_HIST_CACHE = (now, gsr_hist)
+
+    xau_live = fetch_ohlcv("XAUUSD", interval="1h", range_str="5d", use_cache=True)
+    xag_live = fetch_ohlcv("XAGUSD", interval="1h", range_str="5d", use_cache=True)
+    xau_px = float(xau_live["last_price"])
+    xag_px = float(xag_live["last_price"])
+    gsr = (xau_px / xag_px) if xag_px > 0 else 0.0
+
+    n_1y = len(gsr_hist)
+    if n_1y >= 2:
+        mean_1y = sum(gsr_hist) / n_1y
+        var_1y = sum((v - mean_1y) ** 2 for v in gsr_hist) / (n_1y - 1)
+        std_1y = math.sqrt(var_1y)
+        min_1y = min(gsr_hist)
+        max_1y = max(gsr_hist)
+        pct_1y = sum(1 for v in gsr_hist if v <= gsr) / n_1y * 100.0
+        z_1y = ((gsr - mean_1y) / std_1y) if std_1y > 0 else 0.0
+    else:
+        mean_1y = gsr
+        std_1y = 0.0
+        min_1y = gsr
+        max_1y = gsr
+        pct_1y = 50.0
+        z_1y = 0.0
+
+    return {
+        "gsr": round(gsr, 2),
+        "xau": round(xau_px, 2),
+        "xag": round(xag_px, 3),
+        "mean_1y": round(mean_1y, 2),
+        "std_1y": round(std_1y, 2),
+        "min_1y": round(min_1y, 2),
+        "max_1y": round(max_1y, 2),
+        "pct_1y": round(pct_1y, 1),
+        "z_1y": round(z_1y, 2),
+        "n_1y": n_1y,
+        "updated_at": datetime.now().strftime("%H:%M:%S"),
+    }
+
+
 # ── 统一调度入口 ──────────────────────────────────────────────────────────────
 
 def fetch_ohlcv(
@@ -802,6 +918,8 @@ def fetch_ohlcv(
         result = fetch_binance_ohlcv(sym, interval=interval, range_str=range_str)
     elif prov == "okx":
         result = fetch_okx_ohlcv(sym, interval=interval, range_str=range_str)
+    elif prov == "ratio":
+        result = fetch_gsr_ohlcv(interval=interval, range_str=range_str)
     elif prov == "csv":
         result = load_csv_ohlcv(sym)
     else:

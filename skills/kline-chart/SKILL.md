@@ -32,6 +32,7 @@ skills/kline-chart/
 | 资产类别 | 标的代码 | 数据源 (`provider`) | 说明 |
 |---|---|---|---|
 | **伦敦现货 (Spot)** | `XAUUSD`、`XAGUSD` | `eastmoney` (自动路由) | 伦敦金 / 伦敦银国际现货连续价格（USD） |
+| **金银比 (GSR)** | `GSR` (`XAU/XAG`) | `ratio` (自动合成) | 实时金银比 K 线走势，顶部状态栏同步显示 1 年分位数与 Z-Score |
 | **COMEX 主连 / 微型期货** | `GC=F`、`SI=F`、`MGC=F`、`SIL=F` | `yahoo` | COMEX 黄金/白银主连与微型期货 |
 | **COMEX 实时连续期货** | `GC00Y`、`SI00Y` | `eastmoney` (自动路由) | COMEX 黄金/白银连续实时分时与日线 |
 | **COMEX 指定月份合约** | `GCZ26.CMX`、`GCG27.CMX`、`SIH27.CMX` | `yahoo` | 远月/近月期限结构合约（支持升贴水对比） |
@@ -60,6 +61,9 @@ python skills/kline-chart/scripts/kline_chart.py serve --symbol yahoo:GCG27.CMX 
 
 # 看伦敦银现货 (XAGUSD) 或 COMEX 白银连续 (SI00Y)
 python skills/kline-chart/scripts/kline_chart.py serve --symbol XAGUSD --interval 15m --refresh 10
+
+# 直接看金银比 (GSR) 日线与布林带均值回归信号
+python skills/kline-chart/scripts/kline_chart.py serve --symbol GSR --interval 1d --strategy bbands_contrarian
 
 # 周末/盘后看 24 小时链上锚定黄金 (PAXGUSDT)，每 5 秒刷新
 python skills/kline-chart/scripts/kline_chart.py serve --symbol binance:PAXGUSDT --interval 15m --refresh 5
