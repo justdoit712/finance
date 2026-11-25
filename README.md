@@ -9,16 +9,17 @@
 
 ## 一、 标的资产池与数据映射 (Precious Metals Universe)
 
-| 类别 | 标的名称 | 代码 (Yahoo / TradingView / FRED) | 投研价值与核心用途 |
+| 类别 | 标的名称 | 代码 (K-Line / Yahoo / FRED) | 投研价值与核心用途 |
 |:---|:---|:---|:---|
-| **现货/外汇** | 伦敦金现货 / 伦敦银现货 | `XAUUSD=X`, `XAGUSD=X` | 国际贵金属基准现货连续价格 |
-| **主流期货** | COMEX 黄金主力 / 白银主力 | `GC=F`, `SI=F` | 期货期限结构、基差、升贴水与成交量 |
-| **高流动性 ETF** | 黄金 ETF / 白银 ETF | `GLD`, `IAU`, `SLV` | 现货托管份额、机构资金流向与期权对冲 |
+| **国际现货** | 伦敦金现货 / 伦敦银现货 | `XAUUSD`, `XAGUSD` | 国际贵金属基准现货连续价格（USD，实时流直连） |
+| **COMEX 主连** | COMEX 黄金主力 / 白银主力 | `GC=F` (`GC00Y`), `SI=F` (`SI00Y`) | 国际黄金/白银基准期货主连价格与成交量 |
+| **COMEX 微型/月合约** | 微型金银期货 / 指定交割月合约 | `MGC=F`, `SIL=F`, `GCG27.CMX`, `SIH27.CMX` | 轻量化期货头寸与期货期限结构（升贴水/跨期价差） |
+| **海外高流动性 ETF** | 黄金 ETF / 白银 ETF | `GLD`, `IAU`, `SLV` | 现货托管份额、机构资金流向与期权对冲 |
 | **金银矿业股** | 金矿 ETF / 银矿 ETF / 龙头矿企 | `GDX`, `GDXJ`, `SIL`, `NEM` | 贵金属权益资产，提供 1.5~3 倍经营杠杆 Beta |
 | **核心定价因子** | 10Y 美债实际收益率 (TIPS) | FRED: `DFII10` | **黄金最大核心定价因子**（负相关显著） |
-| **货币信用因子** | 贸易加权美元指数 / DXY | FRED: `DTWEXBGS`, `DX-Y.NYB` | 信用货币信用对冲与计价反向驱动 |
+| **货币信用因子** | 美元指数 / 贸易加权美元指数 | `DX-Y.NYB` / FRED: `DTWEXBGS` | 信用货币对冲与计价反向驱动 |
 | **通胀与流动性** | 10Y 盈亏平衡通胀预期 / M2 | FRED: `T10YIE`, `WM2NS` | 货币购买力贬值与抗通胀溢价 |
-| **官方基准价** | 伦敦金早盘/晚盘定盘价历史 | FRED: `GOLDAMGBD228NLBM` | 长周期基准定盘价序列 |
+| **官方基准价** | 伦敦金定盘价历史 | FRED: `GOLDAMGBD228NLBM` | 长周期基准定盘价序列 |
 
 ---
 
@@ -43,7 +44,7 @@ skills/
 - **[backtesting](./skills/backtesting/)**：完整实现 5 阶段回测方法论（数据→研究→度量→调参→验证）。内置 30+ 种风险收益比率（夏普、索提诺、卡玛、凯利、最大回撤、Ulcer、Rachev、CVaR 等）、10 大类技术指标、Johnson SU + t-Copula 前瞻模拟、Walk-forward 走步验证与情景压力测试。
 - **[portfolio](./skills/portfolio/)**：用于计算黄金白银在全天候配置（如桥水全天候）或多元资产组合中的最优仓位比重。支持马科维茨有效前沿、Black-Litterman 贝叶斯后验、层次化风险平价（HRP / HERC）及带约束的嵌套聚类优化（NCO）。
 - **[option-pricing](./skills/option-pricing/)**：用于 GLD / SLV 期权、黄金期货期权的定价与波动率偏度（Skew）分析。支持 Black-Scholes、CRR 二叉树、三叉树、蒙特卡洛（对偶变量）、美式 Longstaff-Schwartz、Heston 随机波动率模型与 Bates 跳跃扩散模型。
-- **[kline-chart](./skills/kline-chart/)**：基于本地打包的 TradingView Lightweight Charts v4.2.3，支持启动本地实时轮询 K 线看板（无闪烁自动刷新、快捷切换金银期货/现货/ETF/国内黄金ETF/24h锚定金、叠加均线/布林带/策略买卖点信号），并支持导出离线单文件静态 HTML。
+- **[kline-chart](./skills/kline-chart/)**：基于本地打包的 TradingView Lightweight Charts v4.2.3，聚焦国际伦敦金银现货（`XAUUSD`/`XAGUSD`）、COMEX 主连/微型/月度期货（`GC=F`/`SI=F`/`MGC=F`/`*.CMX`/`GC00Y`）、海外 ETF（`GLD`/`SLV`/`GDX`）与 24h 锚定金（`PAXGUSDT`），支持无闪烁实时刷新、均线/布林带/策略买卖点叠加及离线静态 HTML 导出。
 
 ### 2. 核心数据源 (Data)
 - **[yahoo-finance](./skills/yahoo-finance/)**：免 API Key、免认证，稳定抓取黄金白银现货（`XAUUSD=X`, `XAGUSD=X`）、COMEX 期货（`GC=F`, `SI=F`）、ETF（`GLD`, `SLV`）和矿业股（`GDX`）的日线与日内 OHLCV。
@@ -75,10 +76,10 @@ skills/
 
 ## 四、 快速上手 (Quick Start)
 
-### 1. 抓取黄金白银主力行情
+### 1. 抓取国际金银期货与 ETF 主力行情
 ```bash
-# 获取 COMEX 黄金/白银期货、伦敦现货及 ETF 最新行情报价
-python skills/yahoo-finance/scripts/batch_fetch.py --tickers GC=F,SI=F,XAUUSD=X,XAGUSD=X,GLD,SLV --quote
+# 获取 COMEX 黄金/白银主力与微型期货、ETF 及美元指数最新行情报价
+python skills/yahoo-finance/scripts/batch_fetch.py --tickers GC=F,SI=F,MGC=F,SIL=F,GLD,SLV,GDX,DX-Y.NYB --quote
 ```
 
 ### 2. 抓取美债 10Y TIPS 实际利率宏观时序
@@ -99,11 +100,11 @@ python skills/backtesting/scripts/backtesting.py validate
 python skills/option-pricing/scripts/option_pricing.py validate
 ```
 
-### 5. 启动黄金白银交互式实时 K 线看板
+### 5. 启动国际金银实时交互 K 线看板
 ```bash
-# 启动本地实时看板（默认 COMEX 黄金 GC=F 1小时线，每 15 秒自动刷新）
+# 启动本地实时看板（默认伦敦金现货 XAUUSD 1小时线，支持切换 COMEX 期货 GC=F / SI=F / MGC=F）
 python skills/kline-chart/scripts/kline_chart.py serve
 
-# 导出单文件离线交互 K 线 HTML
-python skills/kline-chart/scripts/kline_chart.py export --symbol yahoo:GC=F --interval 1d --range 1y -o D:/empty/gc_kline.html
+# 导出单文件离线交互 K 线 HTML（伦敦金现货或 COMEX 黄金期货）
+python skills/kline-chart/scripts/kline_chart.py export --symbol XAUUSD --interval 1d --range 1y -o D:/empty/xauusd_kline.html
 ```

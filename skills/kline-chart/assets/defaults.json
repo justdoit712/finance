@@ -1,6 +1,6 @@
 {
-  "title": "黄金白银交互 K 线看板",
-  "default_symbol": "yahoo:GC=F",
+  "title": "国际金银现货与期货 K 线看板",
+  "default_symbol": "XAUUSD",
   "default_provider": "yahoo",
   "default_interval": "1h",
   "default_range": "auto",
@@ -10,14 +10,15 @@
   "default_host": "127.0.0.1",
   "default_port": 8765,
   "symbols": [
+    {"symbol": "XAUUSD", "label": "伦敦金现货"},
+    {"symbol": "XAGUSD", "label": "伦敦银现货"},
     {"symbol": "yahoo:GC=F", "label": "COMEX 黄金"},
     {"symbol": "yahoo:SI=F", "label": "COMEX 白银"},
-    {"symbol": "yahoo:XAUUSD=X", "label": "伦敦金"},
-    {"symbol": "yahoo:XAGUSD=X", "label": "伦敦银"},
+    {"symbol": "yahoo:MGC=F", "label": "微型金期货"},
+    {"symbol": "yahoo:SIL=F", "label": "微型银期货"},
     {"symbol": "yahoo:GLD", "label": "黄金ETF"},
     {"symbol": "yahoo:SLV", "label": "白银ETF"},
     {"symbol": "yahoo:GDX", "label": "金矿ETF"},
-    {"symbol": "eastmoney:518880", "label": "国内黄金ETF"},
     {"symbol": "binance:PAXGUSDT", "label": "24h锚定金"}
   ],
   "indicators": {

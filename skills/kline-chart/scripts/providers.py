@@ -1,10 +1,13 @@
 """
-providers.py — 黄金与白银多源行情统一适配器 (Yahoo / 东方财富 / Binance / OKX / CSV)。
+providers.py — 国际黄金与白银现货、COMEX 期货多源统一适配器。
 
-提供统一的 ``fetch_ohlcv(...)`` 接口，覆盖 COMEX 金银期货 (`GC=F`/`SI=F`)、
-伦敦金银现货 (`XAUUSD=X`/`XAGUSD=X`)、海外 ETF (`GLD`/`SLV`/`GDX`)、
-国内黄金/白银基金 (`518880`/`159934`/`161226`)、24h 链上锚定黄金代币
-(`PAXGUSDT`/`XAUT-USDT`) 及本地 OHLCV CSV 文件。
+提供统一的 ``fetch_ohlcv(...)`` 接口，覆盖：
+  - 国际现货：伦敦金 (``XAUUSD``)、伦敦银 (``XAGUSD``) — 经由实时行情流直连（USD 计价）
+  - COMEX 期货：黄金主连 (``GC=F`` / ``GC00Y``)、白银主连 (``SI=F`` / ``SI00Y``)、
+    微型期货 (``MGC=F`` / ``SIL=F``)、具体月份合约 (``GCZ26.CMX`` / ``GCG27.CMX`` / ``SIH27.CMX``)
+  - 国际 ETF 与矿业股：``GLD``、``SLV``、``IAU``、``GDX``、``GDXJ``、``SIL``、``NEM``
+  - 24h 链上锚定黄金：``PAXGUSDT`` (Binance)、``XAUT-USDT`` (OKX)
+  - 可选辅助：国内沪金/沪银期货 (``SHFE:AU`` / ``SHFE:AG``)、国内黄金 ETF (``518880``) 与本地 CSV
 
 仅依赖 Python 标准库与可选 requests（无 requests 时自动回退 urllib.request）。
 """
@@ -62,6 +65,37 @@ EASTMONEY_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 OKX_URL = "https://www.okx.com/api/v5/market/candles"
 
 _CN_TZ = timezone(timedelta(hours=8))
+
+# 国际现货 & 期货实时行情别名映射 -> (secid, clean_code, currency, exchange)
+_INTL_EM_ALIASES: dict[str, tuple[str, str, str, str]] = {
+    "XAUUSD": ("122.XAU", "XAUUSD", "USD", "SPOT"),
+    "XAUUSD=X": ("122.XAU", "XAUUSD", "USD", "SPOT"),
+    "XAU": ("122.XAU", "XAUUSD", "USD", "SPOT"),
+    "SPOT:XAU": ("122.XAU", "XAUUSD", "USD", "SPOT"),
+    "XAGUSD": ("122.XAG", "XAGUSD", "USD", "SPOT"),
+    "XAGUSD=X": ("122.XAG", "XAGUSD", "USD", "SPOT"),
+    "XAG": ("122.XAG", "XAGUSD", "USD", "SPOT"),
+    "SPOT:XAG": ("122.XAG", "XAGUSD", "USD", "SPOT"),
+    "GC00Y": ("101.GC00Y", "GC00Y", "USD", "COMEX"),
+    "COMEX:GC": ("101.GC00Y", "GC00Y", "USD", "COMEX"),
+    "SI00Y": ("101.SI00Y", "SI00Y", "USD", "COMEX"),
+    "COMEX:SI": ("101.SI00Y", "SI00Y", "USD", "COMEX"),
+    "SHFE:AU": ("113.aum", "AU0", "CNY", "SHFE"),
+    "AUM": ("113.aum", "AU0", "CNY", "SHFE"),
+    "AU0": ("113.aum", "AU0", "CNY", "SHFE"),
+    "SHFE:AG": ("113.agm", "AG0", "CNY", "SHFE"),
+    "AGM": ("113.agm", "AG0", "CNY", "SHFE"),
+    "AG0": ("113.agm", "AG0", "CNY", "SHFE"),
+}
+
+_SPOT_YAHOO_FALLBACK_SET = {"XAUUSD", "XAUUSD=X", "XAU", "XAGUSD", "XAGUSD=X", "XAG"}
+
+_INTL_DISPLAY_NAMES = {
+    "122.XAU": "伦敦金现货 (XAUUSD)",
+    "122.XAG": "伦敦银现货 (XAGUSD)",
+    "101.GC00Y": "COMEX 黄金连续 (GC00Y)",
+    "101.SI00Y": "COMEX 白银连续 (SI00Y)",
+}
 
 # ── TTL 缓存（避免轮询触发限流） ───────────────────────────────────────────────
 
@@ -151,34 +185,49 @@ def parse_symbol(
     explicit_provider: str | None = None,
     default_provider: str = "yahoo",
 ) -> tuple[str, str]:
-    """解析 ``provider:SYMBOL`` 或根据贵金属代码特征自动推断数据源。
+    """解析 ``provider:SYMBOL`` 或根据贵金属代码特征自动路由数据源。
 
-    示例:
-        - ``GC=F``, ``SI=F``, ``XAUUSD=X``, ``GLD``, ``SLV`` -> ``yahoo``
-        - ``518880``, ``159934.SZ``, ``161226`` -> ``eastmoney``
-        - ``PAXGUSDT`` -> ``binance``
-        - ``XAUT-USDT`` -> ``okx``
+    路由优先级:
+        - ``XAUUSD`` / ``XAUUSD=X`` / ``XAGUSD`` / ``XAGUSD=X`` / ``SPOT:XAU`` -> ``eastmoney`` (122.XAU/XAG，避免 Yahoo 404)
+        - ``GC00Y`` / ``SI00Y`` / ``COMEX:GC`` / ``COMEX:SI`` / ``SHFE:AU`` / ``SHFE:AG`` -> ``eastmoney``
+        - ``GC=F`` / ``SI=F`` / ``MGC=F`` / ``SIL=F`` / ``*.CMX`` / ``GLD`` / ``SLV`` / ``GDX`` -> ``yahoo``
+        - ``PAXGUSDT`` -> ``binance``; ``XAUT-USDT`` -> ``okx``
     """
     s = raw_symbol.strip()
     if not s:
         raise ValueError("标的代码不能为空")
+
+    su = s.upper()
+    if su in _INTL_EM_ALIASES:
+        # 避免 Yahoo Finance 对 XAUUSD=X / XAGUSD=X 返回 404
+        if explicit_provider and explicit_provider.lower() not in ("", "auto", "yahoo"):
+            return explicit_provider.lower(), su
+        return "eastmoney", su
 
     if ":" in s:
         prefix, rest = s.split(":", 1)
         p_low = prefix.strip().lower()
         if p_low in VALID_PROVIDERS:
             sym_val = rest.strip() if p_low == "csv" else rest.strip().upper()
+            if p_low == "yahoo" and sym_val in _SPOT_YAHOO_FALLBACK_SET:
+                return "eastmoney", sym_val
             if explicit_provider and explicit_provider not in ("", "auto"):
-                return explicit_provider.lower(), sym_val
+                ep = explicit_provider.lower()
+                if ep == "yahoo" and sym_val in _SPOT_YAHOO_FALLBACK_SET:
+                    return "eastmoney", sym_val
+                return ep, sym_val
             return p_low, sym_val
 
     if explicit_provider and explicit_provider not in ("", "auto"):
         p_low = explicit_provider.strip().lower()
         if p_low not in VALID_PROVIDERS:
             raise ValueError(f"不支持的数据源 '{explicit_provider}'，可选: {sorted(VALID_PROVIDERS)}")
-        return p_low, s if p_low == "csv" else s.upper()
+        if p_low == "yahoo" and su in _SPOT_YAHOO_FALLBACK_SET:
+            return "eastmoney", su
+        return p_low, s if p_low == "csv" else su
 
-    su = s.upper()
+    if re.fullmatch(r"(101|113|122)\.\w+", su):
+        return "eastmoney", s
     if su.endswith((".SH", ".SZ", ".BJ")) or re.fullmatch(r"[013568]\d{5}", su):
         return "eastmoney", su
     if re.fullmatch(r"[A-Z0-9]{2,10}(USDT|USDC)", su) and "-" not in su and "=" not in su:
@@ -189,7 +238,7 @@ def parse_symbol(
     return default_provider, su
 
 
-# ── 1. Yahoo Finance 适配器（COMEX 期货 / 伦敦现货 / 海外 ETF） ───────────────
+# ── 1. Yahoo Finance 适配器（COMEX 主连/微型/月度期货与国际 ETF） ──────────────
 
 def fetch_yahoo_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
     if interval == "4h":
@@ -279,7 +328,7 @@ def fetch_yahoo_ohlcv(symbol: str, interval: str = "1h", range_str: str | None =
     }
 
 
-# ── 2. 东方财富 Eastmoney 适配器（国内场内黄金/白银 ETF 与黄金矿业股） ──────────
+# ── 2. 国际现货 / COMEX 连续实时适配器（Eastmoney 国际市场行情流） ──────────────
 
 _EM_KLT_MAP = {
     "1m": "1",
@@ -308,63 +357,71 @@ _EM_RANGE_LMT = {
 
 
 def _to_eastmoney_secid(symbol: str) -> tuple[str, str, str, str]:
-    """将国内黄金白银 ETF/基金/矿业股代码转为东方财富 secid。"""
-    s = symbol.strip().upper()
-    if re.fullmatch(r"\d+\.\w+", s):
-        mkt, code = s.split(".", 1)
-        if mkt == "116":
-            return s, code, "HKD", "HKEX"
-        if mkt == "1":
-            return s, code, "CNY", "SSE"
-        if mkt == "0":
-            return s, code, "CNY", "SZSE"
-        return s, code, "CNY", "EM"
+    """将国际现货/期货别名或市场代码转为东方财富 secid，返回 (secid, clean_code, currency, exchange)。"""
+    raw = symbol.strip()
+    su = raw.upper()
 
-    if s.endswith(".HK"):
-        code = s[:-3].zfill(5)
+    if su in _INTL_EM_ALIASES:
+        return _INTL_EM_ALIASES[su]
+
+    if re.fullmatch(r"\d+\.\w+", raw):
+        mkt, code = raw.split(".", 1)
+        if mkt == "101":
+            return raw, code.upper(), "USD", "COMEX"
+        if mkt == "122":
+            return raw, code.upper(), "USD", "SPOT"
+        if mkt == "113":
+            return raw, code.upper(), "CNY", "SHFE"
+        if mkt == "116":
+            return raw, code, "HKD", "HKEX"
+        if mkt == "1":
+            return raw, code, "CNY", "SSE"
+        if mkt == "0":
+            return raw, code, "CNY", "SZSE"
+        return raw, code, "USD", "EM"
+
+    if su.endswith(".HK"):
+        code = su[:-3].zfill(5)
         return f"116.{code}", code, "HKD", "HKEX"
 
-    if s.endswith((".SH", ".SS")):
-        code = s.rsplit(".", 1)[0]
+    if su.endswith((".SH", ".SS")):
+        code = su.rsplit(".", 1)[0]
         return f"1.{code}", code, "CNY", "SSE"
 
-    if s.endswith(".SZ"):
-        code = s[:-3]
+    if su.endswith(".SZ"):
+        code = su[:-3]
         return f"0.{code}", code, "CNY", "SZSE"
 
-    if s.endswith(".BJ"):
-        code = s[:-3]
+    if su.endswith(".BJ"):
+        code = su[:-3]
         return f"0.{code}", code, "CNY", "BSE"
 
-    if re.fullmatch(r"\d{6}", s):
-        if s.startswith(("5", "6", "9")):
-            return f"1.{s}", s, "CNY", "SSE"
-        return f"0.{s}", s, "CNY", "SZSE"
-
-    if re.fullmatch(r"\d{4,5}", s):
-        code = s.zfill(5)
-        return f"116.{code}", code, "HKD", "HKEX"
+    if re.fullmatch(r"\d{6}", su):
+        if su.startswith(("5", "6", "9")):
+            return f"1.{su}", su, "CNY", "SSE"
+        return f"0.{su}", su, "CNY", "SZSE"
 
     raise ValueError(
-        f"东方财富适配器无法识别代码 '{symbol}'，请使用如 518880（黄金ETF）、"
-        "518880.SH、159934.SZ 或 161226（白银LOF）"
+        f"无法识别代码 '{symbol}'，国际现货请用 XAUUSD / XAGUSD，COMEX 连续请用 GC00Y / SI00Y / GC=F / SI=F"
     )
 
 
 def fetch_eastmoney_ohlcv(
     symbol: str,
-    interval: str = "1d",
+    interval: str = "1h",
     range_str: str | None = "auto",
     adjust: str = "qfq",
 ) -> dict[str, Any]:
     if interval not in _EM_KLT_MAP:
-        raise ValueError(f"东方财富接口不支持周期 '{interval}'，可选: {sorted(_EM_KLT_MAP)}")
+        raise ValueError(f"国际现货/期货实时接口不支持周期 '{interval}'，可选: {sorted(_EM_KLT_MAP)}")
 
     secid, clean_code, currency, exchange = _to_eastmoney_secid(symbol)
+    mkt = secid.split(".", 1)[0]
+    is_spot_or_fut = mkt in ("101", "122", "113")
+
     resolved_range = resolve_range(interval, range_str)
     lmt = _EM_RANGE_LMT.get(resolved_range, 260)
-    fqt_map = {"none": "0", "qfq": "1", "hfq": "2"}
-    fqt = fqt_map.get(adjust, "1")
+    fqt = "0" if is_spot_or_fut else {"none": "0", "qfq": "1", "hfq": "2"}.get(adjust, "1")
 
     raw = _http_get_json(
         EASTMONEY_URL,
@@ -379,7 +436,7 @@ def fetch_eastmoney_ohlcv(
         },
     )
     if not isinstance(raw, dict) or not raw.get("data"):
-        raise RuntimeError(f"东方财富未返回 {symbol} (secid={secid}) 的数据")
+        raise RuntimeError(f"未获取到 {symbol} (secid={secid}) 的行情数据")
 
     d = raw["data"]
     klines = d.get("klines") or []
@@ -414,16 +471,17 @@ def fetch_eastmoney_ohlcv(
 
     bars = _sanitize_bars(raw_bars, is_intraday=is_intraday)
     if not bars:
-        raise RuntimeError(f"东方财富在 {symbol} ({interval}) 下无有效 K 线")
+        raise RuntimeError(f"{symbol} ({interval}) 下无有效 K 线")
 
     pre_k = d.get("preKPrice")
     prev_close = float(pre_k) if _is_finite(pre_k) and float(pre_k) > 0 else bars[0]["open"]
     name = d.get("name") or clean_code
+    display_name = _INTL_DISPLAY_NAMES.get(secid, f"{name} ({clean_code})")
 
     return {
         "provider": "eastmoney",
-        "symbol": symbol.upper(),
-        "display_name": f"{name} ({clean_code})",
+        "symbol": clean_code,
+        "display_name": display_name,
         "currency": currency,
         "exchange": exchange,
         "interval": interval,
@@ -433,7 +491,7 @@ def fetch_eastmoney_ohlcv(
         "last_price": bars[-1]["close"],
         "prev_close": prev_close,
         "bars": bars,
-        "source": f"eastmoney({adjust})",
+        "source": f"eastmoney({exchange})" if is_spot_or_fut else f"eastmoney({adjust})",
     }
 
 

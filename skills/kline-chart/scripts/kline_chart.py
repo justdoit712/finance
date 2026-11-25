@@ -65,8 +65,8 @@ def load_defaults() -> dict[str, Any]:
         with open(DEFAULTS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     return {
-        "title": "黄金白银交互 K 线看板",
-        "default_symbol": "yahoo:GC=F",
+        "title": "国际金银现货与期货 K 线看板",
+        "default_symbol": "XAUUSD",
         "default_provider": "yahoo",
         "default_interval": "1h",
         "default_range": "auto",
@@ -76,14 +76,15 @@ def load_defaults() -> dict[str, Any]:
         "default_host": "127.0.0.1",
         "default_port": 8765,
         "symbols": [
+            {"symbol": "XAUUSD", "label": "伦敦金现货"},
+            {"symbol": "XAGUSD", "label": "伦敦银现货"},
             {"symbol": "yahoo:GC=F", "label": "COMEX 黄金"},
             {"symbol": "yahoo:SI=F", "label": "COMEX 白银"},
-            {"symbol": "yahoo:XAUUSD=X", "label": "伦敦金"},
-            {"symbol": "yahoo:XAGUSD=X", "label": "伦敦银"},
+            {"symbol": "yahoo:MGC=F", "label": "微型金期货"},
+            {"symbol": "yahoo:SIL=F", "label": "微型银期货"},
             {"symbol": "yahoo:GLD", "label": "黄金ETF"},
             {"symbol": "yahoo:SLV", "label": "白银ETF"},
             {"symbol": "yahoo:GDX", "label": "金矿ETF"},
-            {"symbol": "eastmoney:518880", "label": "国内黄金ETF"},
             {"symbol": "binance:PAXGUSDT", "label": "24h锚定金"},
         ],
         "indicators": {
@@ -479,12 +480,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="group">
         <select id="provider-select" title="数据源适配器">
           <option value="auto">源: 自动推断</option>
-          <option value="yahoo">Yahoo 期货/现货/ETF</option>
-          <option value="eastmoney">东方财富 国内金银ETF</option>
+          <option value="yahoo">Yahoo (COMEX期货/ETF)</option>
+          <option value="eastmoney">国际现货/期货实时 (XAU/COMEX)</option>
           <option value="binance">Binance 24h锚定金</option>
           <option value="okx">OKX 24h锚定金</option>
         </select>
-        <input type="text" id="custom-symbol" placeholder="代码如 GC=F / XAGUSD=X" />
+        <input type="text" id="custom-symbol" placeholder="代码如 XAUUSD / GC=F / GCG27.CMX" />
         <button id="btn-load-symbol">加载</button>
       </div>
       <div class="divider"></div>
@@ -551,7 +552,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <div class="hint-footer">
-      <span>支持金银标的: GC=F / SI=F / XAUUSD=X / GLD / SLV / 518880 / PAXGUSDT | 滚轮缩放 & 拖拽平移</span>
+      <span>国际金银核心标的: 现货 XAUUSD / XAGUSD | COMEX期货 GC=F / SI=F / MGC=F / 月合约(.CMX) | ETF GLD / SLV / GDX</span>
       <span id="meta-summary">--</span>
     </div>
   </div>
@@ -1091,7 +1092,7 @@ def main() -> None:
     color_choices = ["green_up", "red_up"]
 
     p_serve = sub.add_parser("serve", help="启动本地实时轮询 K 线看板")
-    p_serve.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:GC=F"), help="默认贵金属代码 (支持 provider:SYMBOL)")
+    p_serve.add_argument("--symbol", default=defaults.get("default_symbol", "XAUUSD"), help="默认国际金银代码 (支持 provider:SYMBOL)")
     p_serve.add_argument("--provider", default="auto", choices=provider_choices, help="强制数据源或 auto 自动推断")
     p_serve.add_argument("--interval", default=defaults.get("default_interval", "1h"), choices=sorted(providers.VALID_INTERVALS))
     p_serve.add_argument("--range", default=defaults.get("default_range", "auto"), choices=sorted(providers.VALID_RANGES))
@@ -1104,7 +1105,7 @@ def main() -> None:
     p_serve.set_defaults(func=cmd_serve)
 
     p_exp = sub.add_parser("export", help="导出自包含交互式静态 HTML 文件")
-    p_exp.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:GC=F"), help="贵金属代码 (支持 provider:SYMBOL)")
+    p_exp.add_argument("--symbol", default=defaults.get("default_symbol", "XAUUSD"), help="国际金银代码 (支持 provider:SYMBOL)")
     p_exp.add_argument("--provider", default="auto", choices=provider_choices, help="强制数据源或 auto 自动推断")
     p_exp.add_argument("--csv", help="可选：从本地 OHLCV CSV 读取行情（替代在线拉取）")
     p_exp.add_argument("--interval", default="1d", choices=sorted(providers.VALID_INTERVALS))
