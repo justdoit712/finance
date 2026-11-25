@@ -1,22 +1,10 @@
 """
-providers.py — 多市场 K 线数据统一适配器 (Yahoo / 东方财富 / Binance / OKX / Alpaca / CSV)。
+providers.py — 黄金与白银多源行情统一适配器 (Yahoo / 东方财富 / Binance / OKX / CSV)。
 
-提供统一的 ``fetch_ohlcv(...)`` 接口，将各数据源的响应标准化为:
-{
-    "provider": str,
-    "symbol": str,
-    "display_name": str,
-    "currency": str,
-    "exchange": str,
-    "interval": str,
-    "range": str,
-    "resolved_range": str,
-    "is_intraday": bool,
-    "last_price": float,
-    "prev_close": float,
-    "bars": [{"time": int|str, "open": float, "high": float, "low": float, "close": float, "volume": float}, ...],
-    "source": str,
-}
+提供统一的 ``fetch_ohlcv(...)`` 接口，覆盖 COMEX 金银期货 (`GC=F`/`SI=F`)、
+伦敦金银现货 (`XAUUSD=X`/`XAGUSD=X`)、海外 ETF (`GLD`/`SLV`/`GDX`)、
+国内黄金/白银基金 (`518880`/`159934`/`161226`)、24h 链上锚定黄金代币
+(`PAXGUSDT`/`XAUT-USDT`) 及本地 OHLCV CSV 文件。
 
 仅依赖 Python 标准库与可选 requests（无 requests 时自动回退 urllib.request）。
 """
@@ -25,7 +13,6 @@ from __future__ import annotations
 import csv
 import json
 import math
-import os
 import re
 import threading
 import time
@@ -45,7 +32,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-VALID_PROVIDERS = {"yahoo", "eastmoney", "binance", "okx", "alpaca", "csv"}
+VALID_PROVIDERS = {"yahoo", "eastmoney", "binance", "okx", "csv"}
 VALID_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
 INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h"}
 VALID_RANGES = {"auto", "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
@@ -164,12 +151,18 @@ def parse_symbol(
     explicit_provider: str | None = None,
     default_provider: str = "yahoo",
 ) -> tuple[str, str]:
-    """解析 ``provider:SYMBOL`` 或根据代码特征自动推断数据源。"""
+    """解析 ``provider:SYMBOL`` 或根据贵金属代码特征自动推断数据源。
+
+    示例:
+        - ``GC=F``, ``SI=F``, ``XAUUSD=X``, ``GLD``, ``SLV`` -> ``yahoo``
+        - ``518880``, ``159934.SZ``, ``161226`` -> ``eastmoney``
+        - ``PAXGUSDT`` -> ``binance``
+        - ``XAUT-USDT`` -> ``okx``
+    """
     s = raw_symbol.strip()
     if not s:
         raise ValueError("标的代码不能为空")
 
-    # 1. 处理显式前缀 provider:SYMBOL（如 eastmoney:600519 / csv:D:\a.csv）
     if ":" in s:
         prefix, rest = s.split(":", 1)
         p_low = prefix.strip().lower()
@@ -185,25 +178,22 @@ def parse_symbol(
             raise ValueError(f"不支持的数据源 '{explicit_provider}'，可选: {sorted(VALID_PROVIDERS)}")
         return p_low, s if p_low == "csv" else s.upper()
 
-    # 2. 自动推断规则
     su = s.upper()
-    if su.endswith((".SH", ".SZ", ".BJ")) or re.fullmatch(r"[0368459]\d{5}", su):
+    if su.endswith((".SH", ".SZ", ".BJ")) or re.fullmatch(r"[013568]\d{5}", su):
         return "eastmoney", su
-    if re.fullmatch(r"[A-Z0-9]{2,10}(USDT|USDC|BTC|ETH)", su) and "-" not in su and "=" not in su:
+    if re.fullmatch(r"[A-Z0-9]{2,10}(USDT|USDC)", su) and "-" not in su and "=" not in su:
         return "binance", su
     if re.fullmatch(r"[A-Z0-9]{2,10}-(USDT|USDC)", su):
         return "okx", su
-    if "/" in su and len(su) <= 12:
-        return "alpaca", su
 
     return default_provider, su
 
 
-# ── 1. Yahoo Finance 适配器 ───────────────────────────────────────────────────
+# ── 1. Yahoo Finance 适配器（COMEX 期货 / 伦敦现货 / 海外 ETF） ───────────────
 
 def fetch_yahoo_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
     if interval == "4h":
-        raise ValueError("Yahoo Finance 接口不支持 4h 周期，请选用 1h / 1d 或切换至 Binance / OKX")
+        raise ValueError("Yahoo Finance 接口不支持 4h 周期，请选用 1h / 1d 或切换至 Binance / OKX 24h 锚定金")
     if interval not in VALID_INTERVALS:
         raise ValueError(f"Yahoo Finance 不支持周期 '{interval}'")
 
@@ -289,7 +279,7 @@ def fetch_yahoo_ohlcv(symbol: str, interval: str = "1h", range_str: str | None =
     }
 
 
-# ── 2. 东方财富 Eastmoney 适配器（A股 / 港股） ─────────────────────────────────
+# ── 2. 东方财富 Eastmoney 适配器（国内场内黄金/白银 ETF 与黄金矿业股） ──────────
 
 _EM_KLT_MAP = {
     "1m": "1",
@@ -318,7 +308,7 @@ _EM_RANGE_LMT = {
 
 
 def _to_eastmoney_secid(symbol: str) -> tuple[str, str, str, str]:
-    """将常见 A股/港股代码转为东方财富 secid，返回 (secid, clean_code, currency, exchange)。"""
+    """将国内黄金白银 ETF/基金/矿业股代码转为东方财富 secid。"""
     s = symbol.strip().upper()
     if re.fullmatch(r"\d+\.\w+", s):
         mkt, code = s.split(".", 1)
@@ -328,7 +318,7 @@ def _to_eastmoney_secid(symbol: str) -> tuple[str, str, str, str]:
             return s, code, "CNY", "SSE"
         if mkt == "0":
             return s, code, "CNY", "SZSE"
-        return s, code, "USD", "EM"
+        return s, code, "CNY", "EM"
 
     if s.endswith(".HK"):
         code = s[:-3].zfill(5)
@@ -355,7 +345,10 @@ def _to_eastmoney_secid(symbol: str) -> tuple[str, str, str, str]:
         code = s.zfill(5)
         return f"116.{code}", code, "HKD", "HKEX"
 
-    raise ValueError(f"东方财富适配器无法识别代码 '{symbol}'，请使用如 600519、600519.SH、300750.SZ 或 00700.HK")
+    raise ValueError(
+        f"东方财富适配器无法识别代码 '{symbol}'，请使用如 518880（黄金ETF）、"
+        "518880.SH、159934.SZ 或 161226（白银LOF）"
+    )
 
 
 def fetch_eastmoney_ohlcv(
@@ -398,7 +391,6 @@ def fetch_eastmoney_ohlcv(
         if len(parts) < 6:
             continue
         dt_str = parts[0].strip()
-        # f51=date, f52=open, f53=close, f54=high, f55=low, f56=volume
         if len(dt_str) > 10:
             dt = datetime.strptime(dt_str[:16], "%Y-%m-%d %H:%M").replace(tzinfo=_CN_TZ)
             ts = int(dt.timestamp())
@@ -445,7 +437,7 @@ def fetch_eastmoney_ohlcv(
     }
 
 
-# ── 3. Binance 适配器（加密货币 / 黄金代币 PAXGUSDT） ─────────────────────────
+# ── 3. Binance 适配器（24h 链上锚定黄金代币 PAXGUSDT） ────────────────────────
 
 _BN_INTERVAL_MAP = {
     "1m": "1m",
@@ -459,7 +451,7 @@ _BN_INTERVAL_MAP = {
     "1mo": "1M",
 }
 
-_CRYPTO_LIMIT_MAP = {
+_TOKEN_LIMIT_MAP = {
     "1d": 288,
     "5d": 300,
     "1mo": 400,
@@ -478,7 +470,7 @@ def fetch_binance_ohlcv(symbol: str, interval: str = "1h", range_str: str | None
 
     sym = symbol.replace("-", "").replace("/", "").upper()
     resolved_range = resolve_range(interval, range_str)
-    limit = min(_CRYPTO_LIMIT_MAP.get(resolved_range, 300), 1000)
+    limit = min(_TOKEN_LIMIT_MAP.get(resolved_range, 300), 1000)
 
     rows: list[Any] | None = None
     last_err: Exception | None = None
@@ -518,7 +510,7 @@ def fetch_binance_ohlcv(symbol: str, interval: str = "1h", range_str: str | None
     return {
         "provider": "binance",
         "symbol": sym,
-        "display_name": sym,
+        "display_name": f"{sym} (24h 锚定金)" if sym.startswith("PAXG") else sym,
         "currency": currency,
         "exchange": "BINANCE",
         "interval": interval,
@@ -532,7 +524,7 @@ def fetch_binance_ohlcv(symbol: str, interval: str = "1h", range_str: str | None
     }
 
 
-# ── 4. OKX 适配器（加密货币 / 黄金代币 XAUT-USDT） ────────────────────────────
+# ── 4. OKX 适配器（24h 链上锚定黄金代币 XAUT-USDT） ───────────────────────────
 
 _OKX_INTERVAL_MAP = {
     "1m": "1m",
@@ -557,7 +549,7 @@ def fetch_okx_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "
         inst_id = f"{inst_id[:-len(quote)]}-{quote}"
 
     resolved_range = resolve_range(interval, range_str)
-    limit = min(_CRYPTO_LIMIT_MAP.get(resolved_range, 240), 300)
+    limit = min(_TOKEN_LIMIT_MAP.get(resolved_range, 240), 300)
 
     raw = _http_get_json(
         OKX_URL,
@@ -589,7 +581,7 @@ def fetch_okx_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "
     return {
         "provider": "okx",
         "symbol": inst_id,
-        "display_name": inst_id,
+        "display_name": f"{inst_id} (24h 锚定金)" if inst_id.startswith("XAUT") else inst_id,
         "currency": currency,
         "exchange": "OKX",
         "interval": interval,
@@ -603,79 +595,7 @@ def fetch_okx_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "
     }
 
 
-# ── 5. Alpaca 适配器（美股 / 加密，需环境变量 Key） ────────────────────────────
-
-_ALPACA_TF_MAP = {
-    "1m": "1Min",
-    "5m": "5Min",
-    "15m": "15Min",
-    "30m": "30Min",
-    "1h": "1Hour",
-    "4h": "4Hour",
-    "1d": "1Day",
-    "1wk": "1Week",
-    "1mo": "1Month",
-}
-
-
-def fetch_alpaca_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
-    api_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
-    secret_key = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
-    if not api_key or not secret_key:
-        raise ValueError("Alpaca 数据源需要设置环境变量 ALPACA_API_KEY 与 ALPACA_SECRET_KEY")
-    if interval not in _ALPACA_TF_MAP:
-        raise ValueError(f"Alpaca 不支持周期 '{interval}'，可选: {sorted(_ALPACA_TF_MAP)}")
-
-    resolved_range = resolve_range(interval, range_str)
-    tf = _ALPACA_TF_MAP[interval]
-    hdrs = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret_key}
-    sym = symbol.upper()
-
-    if "/" in sym:
-        url = "https://data.alpaca.markets/v1beta3/crypto/us/bars"
-        raw = _http_get_json(url, params={"symbols": sym, "timeframe": tf, "limit": 500}, headers=hdrs)
-        bar_list = ((raw.get("bars") or {}) if isinstance(raw, dict) else {}).get(sym, [])
-    else:
-        url = f"https://data.alpaca.markets/v2/stocks/{urllib.parse.quote(sym)}/bars"
-        raw = _http_get_json(url, params={"timeframe": tf, "limit": 500, "adjustment": "split"}, headers=hdrs)
-        bar_list = (raw.get("bars") or []) if isinstance(raw, dict) else []
-
-    is_intraday = interval in INTRADAY_INTERVALS
-    raw_bars = []
-    for b in bar_list:
-        dt = datetime.fromisoformat(b["t"].replace("Z", "+00:00"))
-        raw_bars.append(
-            {
-                "ts": int(dt.timestamp()),
-                "open": b.get("o"),
-                "high": b.get("h"),
-                "low": b.get("l"),
-                "close": b.get("c"),
-                "volume": b.get("v", 0),
-            }
-        )
-    bars = _sanitize_bars(raw_bars, is_intraday=is_intraday)
-    if not bars:
-        raise RuntimeError(f"Alpaca 未返回 {sym} 的有效 K 线")
-
-    return {
-        "provider": "alpaca",
-        "symbol": sym,
-        "display_name": sym,
-        "currency": "USD",
-        "exchange": "ALPACA",
-        "interval": interval,
-        "range": range_str or "auto",
-        "resolved_range": resolved_range,
-        "is_intraday": is_intraday,
-        "last_price": bars[-1]["close"],
-        "prev_close": bars[0]["open"],
-        "bars": bars,
-        "source": "alpaca",
-    }
-
-
-# ── 6. 本地 CSV 适配器 ────────────────────────────────────────────────────────
+# ── 5. 本地 CSV 适配器 ────────────────────────────────────────────────────────
 
 def _parse_datetime_token(token: str) -> tuple[int, str, bool]:
     s = token.strip()
@@ -824,8 +744,6 @@ def fetch_ohlcv(
         result = fetch_binance_ohlcv(sym, interval=interval, range_str=range_str)
     elif prov == "okx":
         result = fetch_okx_ohlcv(sym, interval=interval, range_str=range_str)
-    elif prov == "alpaca":
-        result = fetch_alpaca_ohlcv(sym, interval=interval, range_str=range_str)
     elif prov == "csv":
         result = load_csv_ohlcv(sym)
     else:

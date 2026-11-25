@@ -1,10 +1,9 @@
 # 01-gold-silver 分支 — 黄金与白银专属量化投研系统 (Precious Metals Quant System)
 
 [![Branch: 01-gold-silver](https://img.shields.io/badge/branch-01--gold--silver-gold.svg)](https://github.com/justdoit712/finance/tree/01-gold-silver)
-[![Base: main](https://img.shields.io/badge/root_base-main-blue.svg)](https://github.com/justdoit712/finance/tree/main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-本项目 `01-gold-silver` 分支专精于**黄金与白银（Gold & Silver / 贵金属）**的量化投研体系。在主干 `main`（保留全量 26 个通用技能）的基础上，精炼保留了 6 个与大宗商品、宏观因子及量化投研密切相关的顶级计算与数据引擎，移除了无关的个股与微观财报模块，打造高纯度、工程化的贵金属量化投研系统。
+专用于黄金与白银（Gold & Silver / 贵金属）的量化投研、衍生品定价与可视化分析系统。
 
 ---
 
@@ -78,15 +77,14 @@ skills/
 
 ### 1. 抓取黄金白银主力行情
 ```bash
-# 获取 COMEX 黄金主力期货、白银主力期货、黄金现货最新行情
-python skills/yahoo-finance/scripts/fetch_quote.py GC=F SI=F XAUUSD=X XAGUSD=X GLD SLV
+# 获取 COMEX 黄金/白银期货、伦敦现货及 ETF 最新行情报价
+python skills/yahoo-finance/scripts/batch_fetch.py --tickers GC=F,SI=F,XAUUSD=X,XAGUSD=X,GLD,SLV --quote
 ```
 
 ### 2. 抓取美债 10Y TIPS 实际利率宏观时序
 ```bash
-# 获取 10年期美债实际收益率 (DFII10) 与美元指数 (DTWEXBGS)
-python skills/fred-macro/scripts/fetch_series.py DFII10 --limit 100
-python skills/fred-macro/scripts/fetch_series.py DTWEXBGS --limit 100
+# 获取 10年期美债实际收益率 (DFII10) 与贸易加权美元指数 (DTWEXBGS)（需配置 FRED_API_KEY）
+python skills/fred-macro/scripts/fetch_series.py --series DFII10,DTWEXBGS --start 2020-01-01
 ```
 
 ### 3. 运行策略回测验证
@@ -109,10 +107,3 @@ python skills/kline-chart/scripts/kline_chart.py serve
 # 导出单文件离线交互 K 线 HTML
 python skills/kline-chart/scripts/kline_chart.py export --symbol yahoo:GC=F --interval 1d --range 1y -o D:/empty/gc_kline.html
 ```
-
----
-
-## 五、 分支管理说明
-
-- **`main` 分支**：项目主干，完整保留全部 26 个量化技能（含美股、期权、全球 39 国股票市场、基本面财报等全量代码）。
-- **`01-gold-silver` 分支**：当前分支，专精于黄金白银贵金属量化投研。

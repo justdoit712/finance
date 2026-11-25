@@ -1,20 +1,22 @@
 """
-kline_chart.py — 全市场多源交互式 K 线看板 & 离线静态 HTML 导出器。
+kline_chart.py — 黄金白银交互式 K 线看板 & 离线静态 HTML 导出器。
 
-基于本地打包的 TradingView Lightweight Charts v4.2.3，通过 providers.py 统一支持
-美股/港股/A股（Yahoo / 东方财富）、贵金属、加密货币（Binance / OKX / Alpaca）与本地 CSV。
+基于本地打包的 TradingView Lightweight Charts v4.2.3，通过 providers.py 支持
+COMEX 金银期货 (GC=F/SI=F)、伦敦金银现货 (XAUUSD=X/XAGUSD=X)、海外 ETF
+(GLD/SLV/GDX)、国内黄金白银基金 (518880/159934/161226)、24h 链上锚定金
+(PAXGUSDT/XAUT-USDT) 与本地 OHLCV CSV。
 
 用法:
-    # 启动本地实时交互看板（默认配置从 assets/defaults.json 加载）
+    # 启动本地实时交互看板（默认 GC=F 1h，每 15 秒自动刷新）
     python skills/kline-chart/scripts/kline_chart.py serve
 
-    # 指定数据源与标的（A股前复权 / 加密货币 / 美股 / 贵金属）
-    python skills/kline-chart/scripts/kline_chart.py serve --symbol eastmoney:600519 --interval 1d --color-scheme red_up
-    python skills/kline-chart/scripts/kline_chart.py serve --symbol binance:BTCUSDT --interval 15m --refresh 5
+    # 指定标的、周期与配色（如国内黄金 ETF 红涨绿跌）
+    python skills/kline-chart/scripts/kline_chart.py serve --symbol eastmoney:518880 --interval 1d --color-scheme red_up
+    python skills/kline-chart/scripts/kline_chart.py serve --symbol binance:PAXGUSDT --interval 15m --refresh 5
 
     # 导出单文件交互式静态 HTML（内嵌 Lightweight Charts 与数据，可离线分享）
-    python skills/kline-chart/scripts/kline_chart.py export --symbol yahoo:AAPL --interval 1d --range 1y -o D:/empty/aapl.html
-    python skills/kline-chart/scripts/kline_chart.py export --csv data/my_ohlcv.csv -o D:/empty/local.html
+    python skills/kline-chart/scripts/kline_chart.py export --symbol yahoo:GC=F --interval 1d --range 1y -o D:/empty/gc_kline.html
+    python skills/kline-chart/scripts/kline_chart.py export --csv data/GC=F_historical.csv -o D:/empty/gc_local.html
 """
 from __future__ import annotations
 
@@ -63,10 +65,10 @@ def load_defaults() -> dict[str, Any]:
         with open(DEFAULTS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     return {
-        "title": "全市场交互式 K 线看板",
-        "default_symbol": "yahoo:SPY",
+        "title": "黄金白银交互 K 线看板",
+        "default_symbol": "yahoo:GC=F",
         "default_provider": "yahoo",
-        "default_interval": "1d",
+        "default_interval": "1h",
         "default_range": "auto",
         "default_strategy": "sma_crossover",
         "default_refresh_seconds": 15,
@@ -74,12 +76,15 @@ def load_defaults() -> dict[str, Any]:
         "default_host": "127.0.0.1",
         "default_port": 8765,
         "symbols": [
-            {"symbol": "yahoo:SPY", "label": "标普500"},
-            {"symbol": "yahoo:AAPL", "label": "苹果"},
-            {"symbol": "eastmoney:600519", "label": "贵州茅台"},
-            {"symbol": "eastmoney:00700.HK", "label": "腾讯控股"},
-            {"symbol": "yahoo:GC=F", "label": "COMEX黄金"},
-            {"symbol": "binance:BTCUSDT", "label": "BTC/USDT"},
+            {"symbol": "yahoo:GC=F", "label": "COMEX 黄金"},
+            {"symbol": "yahoo:SI=F", "label": "COMEX 白银"},
+            {"symbol": "yahoo:XAUUSD=X", "label": "伦敦金"},
+            {"symbol": "yahoo:XAGUSD=X", "label": "伦敦银"},
+            {"symbol": "yahoo:GLD", "label": "黄金ETF"},
+            {"symbol": "yahoo:SLV", "label": "白银ETF"},
+            {"symbol": "yahoo:GDX", "label": "金矿ETF"},
+            {"symbol": "eastmoney:518880", "label": "国内黄金ETF"},
+            {"symbol": "binance:PAXGUSDT", "label": "24h锚定金"},
         ],
         "indicators": {
             "sma_fast": 20,
@@ -424,7 +429,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       color: var(--accent); font-weight: 600;
     }
     button:disabled, select:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
-    input[type="text"] { width: 125px; }
+    input[type="text"] { width: 145px; }
     label.chk {
       display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
       padding: 2px 6px; border-radius: 4px; user-select: none;
@@ -474,13 +479,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="group">
         <select id="provider-select" title="数据源适配器">
           <option value="auto">源: 自动推断</option>
-          <option value="yahoo">Yahoo Finance</option>
-          <option value="eastmoney">东方财富 (A股/港股)</option>
-          <option value="binance">Binance (实时)</option>
-          <option value="okx">OKX (实时)</option>
-          <option value="alpaca">Alpaca</option>
+          <option value="yahoo">Yahoo 期货/现货/ETF</option>
+          <option value="eastmoney">东方财富 国内金银ETF</option>
+          <option value="binance">Binance 24h锚定金</option>
+          <option value="okx">OKX 24h锚定金</option>
         </select>
-        <input type="text" id="custom-symbol" placeholder="代码如 600519 / AAPL" />
+        <input type="text" id="custom-symbol" placeholder="代码如 GC=F / XAGUSD=X" />
         <button id="btn-load-symbol">加载</button>
       </div>
       <div class="divider"></div>
@@ -547,7 +551,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <div class="hint-footer">
-      <span>支持全市场代码: 600519.SH / 00700.HK / AAPL / GC=F / BTCUSDT | 滚轮缩放 & 拖拽平移</span>
+      <span>支持金银标的: GC=F / SI=F / XAUUSD=X / GLD / SLV / 518880 / PAXGUSDT | 滚轮缩放 & 拖拽平移</span>
       <span id="meta-summary">--</span>
     </div>
   </div>
@@ -906,7 +910,7 @@ def render_html(
     else:
         script_tag = '<script src="/assets/lightweight-charts.standalone.production.js"></script>'
 
-    title = app_config.get("title") or "全市场交互式 K 线看板"
+    title = app_config.get("title") or "黄金白银交互 K 线看板"
     cfg_json = json.dumps(app_config, ensure_ascii=False).replace("</", "<\\/")
     payload_json = (
         json.dumps(initial_payload, ensure_ascii=False).replace("</", "<\\/")
@@ -998,7 +1002,7 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
 def cmd_serve(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
     app_config = {
         "mode": "live",
-        "title": defaults.get("title", "全市场交互式 K 线看板"),
+        "title": defaults.get("title", "黄金白银交互 K 线看板"),
         "symbol": args.symbol.strip(),
         "provider": args.provider,
         "interval": args.interval,
@@ -1011,7 +1015,7 @@ def cmd_serve(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
     handler_cls = make_handler(defaults, app_config)
     server = ThreadingHTTPServer((args.host, args.port), handler_cls)
     url = f"http://{args.host}:{args.port}/"
-    print(f"→ 交互式 K 线看板已启动: {url}")
+    print(f"→ 黄金白银交互式 K 线看板已启动: {url}")
     print(
         f"  默认标的={app_config['symbol']} | 周期={app_config['interval']} | "
         f"自动刷新={app_config['refresh']}s | 策略={app_config['strategy']} | 配色={app_config['color_scheme']}"
@@ -1049,7 +1053,7 @@ def cmd_export(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
     payload = build_kline_payload(raw_data, strategy=args.strategy, defaults=defaults)
     app_config = {
         "mode": "static",
-        "title": defaults.get("title", "全市场交互式 K 线看板"),
+        "title": defaults.get("title", "黄金白银交互 K 线看板"),
         "symbol": payload["meta"]["symbol"],
         "provider": payload["meta"]["provider"],
         "interval": payload["meta"]["interval"],
@@ -1079,7 +1083,7 @@ def cmd_export(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
 def main() -> None:
     defaults = load_defaults()
     parser = argparse.ArgumentParser(
-        description="全市场多源交互式 K 线看板 & 静态 HTML 导出器 (TradingView Lightweight Charts)"
+        description="黄金白银交互式 K 线看板 & 静态 HTML 导出器 (TradingView Lightweight Charts)"
     )
     sub = parser.add_subparsers(dest="mode", required=True)
 
@@ -1087,9 +1091,9 @@ def main() -> None:
     color_choices = ["green_up", "red_up"]
 
     p_serve = sub.add_parser("serve", help="启动本地实时轮询 K 线看板")
-    p_serve.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:SPY"), help="默认标的代码 (支持 provider:SYMBOL)")
+    p_serve.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:GC=F"), help="默认贵金属代码 (支持 provider:SYMBOL)")
     p_serve.add_argument("--provider", default="auto", choices=provider_choices, help="强制数据源或 auto 自动推断")
-    p_serve.add_argument("--interval", default=defaults.get("default_interval", "1d"), choices=sorted(providers.VALID_INTERVALS))
+    p_serve.add_argument("--interval", default=defaults.get("default_interval", "1h"), choices=sorted(providers.VALID_INTERVALS))
     p_serve.add_argument("--range", default=defaults.get("default_range", "auto"), choices=sorted(providers.VALID_RANGES))
     p_serve.add_argument("--strategy", default=defaults.get("default_strategy", "sma_crossover"), choices=sorted(VALID_STRATEGIES))
     p_serve.add_argument("--refresh", type=int, default=int(defaults.get("default_refresh_seconds", 15)), help="自动刷新间隔(秒)，0为暂停")
@@ -1100,7 +1104,7 @@ def main() -> None:
     p_serve.set_defaults(func=cmd_serve)
 
     p_exp = sub.add_parser("export", help="导出自包含交互式静态 HTML 文件")
-    p_exp.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:SPY"), help="标的代码 (支持 provider:SYMBOL)")
+    p_exp.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:GC=F"), help="贵金属代码 (支持 provider:SYMBOL)")
     p_exp.add_argument("--provider", default="auto", choices=provider_choices, help="强制数据源或 auto 自动推断")
     p_exp.add_argument("--csv", help="可选：从本地 OHLCV CSV 读取行情（替代在线拉取）")
     p_exp.add_argument("--interval", default="1d", choices=sorted(providers.VALID_INTERVALS))
