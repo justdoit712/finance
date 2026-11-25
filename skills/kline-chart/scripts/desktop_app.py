@@ -275,8 +275,8 @@ def main() -> None:
     color_choices = ["green_up", "red_up"]
 
     parser = argparse.ArgumentParser(description="加密货币独立桌面行情客户端")
-    parser.add_argument("--symbol", default=defaults.get("default_symbol", "binance:BTCUSDT"))
-    parser.add_argument("--provider", default="auto", choices=provider_choices)
+    parser.add_argument("--symbol", default=defaults.get("default_symbol", "gate:BTC_USDT"))
+    parser.add_argument("--provider", default="gate", choices=provider_choices)
     parser.add_argument("--interval", default=defaults.get("default_interval", "15m"), choices=sorted(providers.VALID_INTERVALS))
     parser.add_argument("--range", default=defaults.get("default_range", "auto"), choices=sorted(providers.VALID_RANGES))
     parser.add_argument("--strategy", default=defaults.get("default_strategy", "sma_crossover"), choices=sorted(kline_chart.VALID_STRATEGIES))

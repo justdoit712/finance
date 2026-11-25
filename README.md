@@ -51,7 +51,7 @@ skills/
 - **[backtesting](./skills/backtesting/)**：学术级 5 阶段回测框架，专为高波动资产优化。内置 30+ 种风险收益比率（夏普、索提诺、卡玛、最大回撤、CVaR 等）、10 大类技术指标、走步向前（Walk-forward）交叉验证与 t-Copula 极端前瞻模拟。
 - **[portfolio](./skills/portfolio/)**：用于求解多币种投资组合的最优配置权重。提供层次化风险平价（HRP）与嵌套聚类优化（NCO），有效解决加密资产之间的高相关性与协方差病态问题。
 - **[option-pricing](./skills/option-pricing/)**：用于 BTC/ETH 加密期权（对标 Deribit / OKX 期权）定价与对冲分析。支持 Black-Scholes、二叉树、蒙特卡洛及 Heston 随机波动率模型，计算 Greeks 与 IV 偏度。
-- **[kline-chart](./skills/kline-chart/)**：独立桌面行情客户端与交互式 K 线引擎（基于 TradingView Lightweight Charts v4.2.3）。内置左侧自选标的实时报价列表，原生直连 Binance / Gate.io / OKX 实时行情并兼容 Yahoo（IBIT / COIN / MSTR），支持山寨币种自动回退、5 秒级无闪烁刷新、均线/布林带/策略买卖点叠加及离线静态 HTML 导出。
+- **[kline-chart](./skills/kline-chart/)**：独立桌面行情客户端与交互式 K 线引擎（基于 TradingView Lightweight Charts v4.2.3）。统一直连 Gate.io 现货公开实时行情（免 Key，覆盖主流币与 2,100+ 山寨币种），内置左侧自选标的实时报价列表、5 秒级无闪烁刷新、均线/布林带/策略买卖点叠加及离线静态 HTML 导出。
 
 ### 3. 宏观流动性与跨市场数据 (Macro & Cross-Asset)
 - **[fred-macro](./skills/fred-macro/)**：获取美联储全球流动性数据（资产负债表 `WALCL`、货币供应量 `WM2NS`、基准利率 `FEDFUNDS`），构建加密宏观周期顶底指标。
@@ -112,11 +112,11 @@ python skills/portfolio/scripts/cli.py hrp
 # 方式一：直接双击根目录 launch_client.bat，或命令行启动独立桌面窗口
 python skills/kline-chart/scripts/desktop_app.py
 
-# 启动时直接定位指定标的（如 TAUSDT 自动路由至 Gate.io 现货）
+# 启动时直接定位指定币种（支持 BTC / TAUSDT / TA_USDT 等写法）
 python skills/kline-chart/scripts/desktop_app.py --symbol TAUSDT --interval 15m
 
 # 导出单文件离线交互 K 线 HTML
-python skills/kline-chart/scripts/kline_chart.py export --symbol binance:BTCUSDT --interval 1h --range 1mo -o D:/empty/btc_kline.html
+python skills/kline-chart/scripts/kline_chart.py export --symbol BTCUSDT --interval 1h --range 1mo -o D:/empty/btc_kline.html
 ```
 
 

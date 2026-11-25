@@ -599,16 +599,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="app">
     <div class="toolbar">
       <div class="group">
-        <select id="provider-select" title="数据源适配器">
-          <option value="auto">源: 自动推断</option>
-          <option value="binance">Binance (实时)</option>
-          <option value="gate">Gate.io (现货实时)</option>
-          <option value="okx">OKX (实时)</option>
-          <option value="yahoo">Yahoo Finance</option>
-          <option value="eastmoney">东方财富 (A股/港股)</option>
-          <option value="alpaca">Alpaca</option>
-        </select>
-        <input type="text" id="custom-symbol" placeholder="代码如 TAUSDT / SOLUSDT" />
+        <input type="text" id="custom-symbol" placeholder="输入币种如 BTC / TAUSDT" />
         <button id="btn-load-symbol">加载</button>
       </div>
       <div class="divider"></div>
@@ -691,7 +682,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <div class="hint-footer">
-      <span>支持代码: BTCUSDT / TAUSDT / okx:BTC-USDT / yahoo:IBIT / COIN / MSTR | 滚轮缩放 & 拖拽平移</span>
+      <span>数据源: Gate.io 现货 · 支持输入 BTC / BTCUSDT / TAUSDT / TA_USDT | 滚轮缩放 & 拖拽平移</span>
       <span id="meta-summary">--</span>
     </div>
   </div>
@@ -830,7 +821,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const row = document.createElement("div");
         row.className = "wl-item" + (isActive ? " active" : "");
 
-        const provText = (q && q.provider) ? q.provider : (item.symbol.includes(":") ? item.symbol.split(":")[0] : "auto");
+        const provText = (q && q.provider) ? q.provider : "gate";
         const priceStr = (q && q.last_price != null) ? fmtNum(q.last_price) : "--";
         const chgVal = (q && q.change_pct != null) ? Number(q.change_pct) : null;
         const chgCls = chgVal == null ? "" : (chgVal >= 0 ? "up" : "down");
@@ -928,8 +919,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       btn.disabled = true;
       btn.textContent = "...";
       try {
-        const chosenProv = document.getElementById("provider-select").value;
-        const spec = (!raw.includes(":") && chosenProv && chosenProv !== "auto") ? `${chosenProv}:${raw}` : raw;
+        const spec = raw;
         const resp = await fetch(`/api/quotes?symbols=${encodeURIComponent(spec)}`);
         const data = await resp.json();
         const q = (data.quotes && data.quotes[0]) ? data.quotes[0] : null;
@@ -946,7 +936,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           await saveWatchlistRemote(state.watchlist);
         }
         state.symbol = canonical;
-        state.provider = "auto";
+        state.provider = "gate";
         document.getElementById("wl-add-input").value = "";
         renderToolbar();
         renderWatchlist();
@@ -977,8 +967,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         intBox.appendChild(btn);
       });
 
-      document.getElementById("provider-select").value = state.provider;
-      document.getElementById("provider-select").disabled = state.isStatic;
       document.getElementById("range-select").value = state.range;
       document.getElementById("range-select").disabled = state.isStatic;
       document.getElementById("strategy-select").value = state.strategy;
@@ -1187,7 +1175,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const val = document.getElementById("custom-symbol").value.trim();
       if (!val) return;
       state.symbol = val;
-      state.provider = document.getElementById("provider-select").value;
+      state.provider = "gate";
       renderToolbar();
       renderWatchlist();
       fetchAndRender(false);
@@ -1195,10 +1183,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     document.getElementById("custom-symbol").addEventListener("keydown", (e) => {
       if (e.key === "Enter") document.getElementById("btn-load-symbol").click();
     });
-    document.getElementById("provider-select").onchange = (e) => {
-      state.provider = e.target.value;
-      fetchAndRender(false);
-    };
     document.getElementById("range-select").onchange = (e) => { state.range = e.target.value; fetchAndRender(false); };
     document.getElementById("strategy-select").onchange = (e) => { state.strategy = e.target.value; fetchAndRender(false); };
     document.getElementById("refresh-select").onchange = (e) => {
@@ -1273,7 +1257,7 @@ def make_handler(
     app_config: dict[str, Any],
     shutdown_callback: Callable[[], None] | None = None,
 ):
-    default_provider = defaults.get("default_provider", "yahoo")
+    default_provider = defaults.get("default_provider", "gate")
 
     class KlineHandler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:
@@ -1423,7 +1407,7 @@ def cmd_serve(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
 
 
 def cmd_export(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
-    default_provider = defaults.get("default_provider", "yahoo")
+    default_provider = defaults.get("default_provider", "gate")
     if args.csv:
         raw_data = providers.load_csv_ohlcv(
             args.csv,
@@ -1480,21 +1464,21 @@ def main() -> None:
     color_choices = ["green_up", "red_up"]
 
     p_serve = sub.add_parser("serve", help="启动本地实时轮询 K 线看板")
-    p_serve.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:SPY"), help="默认标的代码 (支持 provider:SYMBOL)")
-    p_serve.add_argument("--provider", default="auto", choices=provider_choices, help="强制数据源或 auto 自动推断")
-    p_serve.add_argument("--interval", default=defaults.get("default_interval", "1d"), choices=sorted(providers.VALID_INTERVALS))
+    p_serve.add_argument("--symbol", default=defaults.get("default_symbol", "gate:BTC_USDT"), help="默认标的代码 (如 BTC / TAUSDT / gate:TA_USDT)")
+    p_serve.add_argument("--provider", default="gate", choices=provider_choices, help="数据源 (默认 gate)")
+    p_serve.add_argument("--interval", default=defaults.get("default_interval", "15m"), choices=sorted(providers.VALID_INTERVALS))
     p_serve.add_argument("--range", default=defaults.get("default_range", "auto"), choices=sorted(providers.VALID_RANGES))
     p_serve.add_argument("--strategy", default=defaults.get("default_strategy", "sma_crossover"), choices=sorted(VALID_STRATEGIES))
-    p_serve.add_argument("--refresh", type=int, default=int(defaults.get("default_refresh_seconds", 15)), help="自动刷新间隔(秒)，0为暂停")
+    p_serve.add_argument("--refresh", type=int, default=int(defaults.get("default_refresh_seconds", 5)), help="自动刷新间隔(秒)，0为暂停")
     p_serve.add_argument("--color-scheme", default=defaults.get("color_scheme", "green_up"), choices=color_choices)
     p_serve.add_argument("--host", default=defaults.get("default_host", "127.0.0.1"))
-    p_serve.add_argument("--port", type=int, default=int(defaults.get("default_port", 8765)))
+    p_serve.add_argument("--port", type=int, default=int(defaults.get("default_port", 8766)))
     p_serve.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
     p_serve.set_defaults(func=cmd_serve)
 
     p_exp = sub.add_parser("export", help="导出自包含交互式静态 HTML 文件")
-    p_exp.add_argument("--symbol", default=defaults.get("default_symbol", "yahoo:SPY"), help="标的代码 (支持 provider:SYMBOL)")
-    p_exp.add_argument("--provider", default="auto", choices=provider_choices, help="强制数据源或 auto 自动推断")
+    p_exp.add_argument("--symbol", default=defaults.get("default_symbol", "gate:BTC_USDT"), help="标的代码 (如 BTC / TAUSDT / gate:TA_USDT)")
+    p_exp.add_argument("--provider", default="gate", choices=provider_choices, help="数据源 (默认 gate)")
     p_exp.add_argument("--csv", help="可选：从本地 OHLCV CSV 读取行情（替代在线拉取）")
     p_exp.add_argument("--interval", default="1d", choices=sorted(providers.VALID_INTERVALS))
     p_exp.add_argument("--range", default="1y", choices=sorted(providers.VALID_RANGES))

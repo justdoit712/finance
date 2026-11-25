@@ -1,7 +1,7 @@
 {
   "title": "加密货币桌面行情客户端",
-  "default_symbol": "binance:BTCUSDT",
-  "default_provider": "binance",
+  "default_symbol": "gate:BTC_USDT",
+  "default_provider": "gate",
   "default_interval": "15m",
   "default_range": "auto",
   "default_strategy": "sma_crossover",
@@ -10,9 +10,9 @@
   "default_host": "127.0.0.1",
   "default_port": 8766,
   "symbols": [
-    {"symbol": "binance:BTCUSDT", "label": "BTC/USDT"},
-    {"symbol": "binance:ETHUSDT", "label": "ETH/USDT"},
-    {"symbol": "binance:SOLUSDT", "label": "SOL/USDT"},
+    {"symbol": "gate:BTC_USDT", "label": "BTC/USDT"},
+    {"symbol": "gate:ETH_USDT", "label": "ETH/USDT"},
+    {"symbol": "gate:SOL_USDT", "label": "SOL/USDT"},
     {"symbol": "gate:TA_USDT", "label": "TA/USDT"}
   ],
   "indicators": {
