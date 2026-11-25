@@ -1,6 +1,6 @@
 ---
 name: kline-chart
-description: "国际黄金与白银现货、COMEX 期货交互式 K 线看板及离线静态 HTML 导出技能（基于 TradingView Lightweight Charts v4.2.3）。默认聚焦伦敦金银现货（XAUUSD / XAGUSD）、COMEX 期货（主力连续 GC=F/SI=F/GC00Y/SI00Y、微型期货 MGC=F/SIL=F、具体月份合约 *.CMX）、海外 ETF（GLD / SLV / GDX）及 24h 美元锚定黄金代币（PAXGUSDT / XAUT-USDT），提供无闪烁定时刷新、均线/布林带/策略买卖点叠加与绿涨红跌/红涨绿跌一键切换。"
+description: "国际黄金与白银现货、COMEX 期货交互式 K 线看板及离线静态 HTML 导出技能（基于 TradingView Lightweight Charts v4.2.3）。默认聚焦伦敦金银现货（XAUUSD / XAGUSD）、COMEX 期货（主力连续 GC=F/SI=F/GC00Y/SI00Y、微型期货 MGC=F/SIL=F、具体月份合约 *.CMX）、海外 ETF（GLD / SLV / GDX）及 24h 美元锚定黄金代币（PAXGUSDT / XAUT-USDT），提供无闪烁定时刷新、均线/布林带/策略买卖点叠加，统一采用国际绿涨红跌配色。"
 license: MIT
 ---
 
@@ -82,7 +82,7 @@ python skills/kline-chart/scripts/kline_chart.py export --symbol yahoo:GC=F --in
 - **多周期**：`1m`、`5m`、`15m`、`1h`、`4h`（Binance/OKX 支持）、`1d`、`1wk`。
 - **主图叠加**：`SMA20`、`SMA60`、布林带 `(20, 2.0)`、成交量柱状图（可一键显隐）。
 - **策略买卖点标记（严格多头交替）**：`none`、`sma_crossover`、`bbands_contrarian`、`rsi_meanrev`、`macd_crossover`。
-- **配色切换与无闪烁刷新**：支持一键切换绿涨红跌/红涨绿跌，自动轮询保留缩放平移视口。
+- **国际配色与无闪烁刷新**：统一采用国际绿涨红跌标准，自动轮询保留缩放平移视口。
 
 ---
 

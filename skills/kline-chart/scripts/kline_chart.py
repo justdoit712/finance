@@ -7,11 +7,11 @@ COMEX 金银期货 (GC=F/SI=F)、伦敦金银现货 (XAUUSD=X/XAGUSD=X)、海外
 (PAXGUSDT/XAUT-USDT) 与本地 OHLCV CSV。
 
 用法:
-    # 启动本地实时交互看板（默认 GC=F 1h，每 15 秒自动刷新）
+    # 启动本地实时交互看板（默认伦敦金 XAUUSD 1h，每 15 秒自动刷新）
     python skills/kline-chart/scripts/kline_chart.py serve
 
-    # 指定标的、周期与配色（如国内黄金 ETF 红涨绿跌）
-    python skills/kline-chart/scripts/kline_chart.py serve --symbol eastmoney:518880 --interval 1d --color-scheme red_up
+    # 指定国际标的与周期（COMEX 黄金 / 24h 锚定金）
+    python skills/kline-chart/scripts/kline_chart.py serve --symbol yahoo:GC=F --interval 1h
     python skills/kline-chart/scripts/kline_chart.py serve --symbol binance:PAXGUSDT --interval 15m --refresh 5
 
     # 导出单文件交互式静态 HTML（内嵌 Lightweight Charts 与数据，可离线分享）
@@ -72,7 +72,6 @@ def load_defaults() -> dict[str, Any]:
         "default_range": "auto",
         "default_strategy": "sma_crossover",
         "default_refresh_seconds": 15,
-        "color_scheme": "green_up",
         "default_host": "127.0.0.1",
         "default_port": 8765,
         "symbols": [
@@ -527,7 +526,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <option value="60">刷新: 60s</option>
         </select>
         <button id="btn-refresh">立即刷新</button>
-        <button id="btn-color-scheme" title="切换绿涨红跌 / 红涨绿跌">绿涨红跌</button>
         <button id="btn-fit" title="重置缩放适应全屏">适应屏幕</button>
       </div>
     </div>
@@ -570,12 +568,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       range: APP_CONFIG.range,
       strategy: APP_CONFIG.strategy,
       refreshSec: Number(APP_CONFIG.refresh || 0),
-      colorScheme: APP_CONFIG.color_scheme || "green_up",
       isStatic: APP_CONFIG.mode === "static",
       lastKey: "",
       lastPayload: null,
-      lastCrosshairBar: null,
-      lastCrosshairVol: null,
       timerId: null,
       loading: false,
     };
@@ -613,42 +608,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         if (width > 0 && height > 0) chart.resize(Math.floor(width), Math.floor(height));
       }
     }).observe(chartEl);
-
-    function getColors() {
-      if (state.colorScheme === "red_up") {
-        return { up: "#ef5350", down: "#26a69a", upVol: "rgba(239, 83, 80, 0.45)", downVol: "rgba(38, 166, 154, 0.45)", label: "红涨绿跌" };
-      }
-      return { up: "#26a69a", down: "#ef5350", upVol: "rgba(38, 166, 154, 0.45)", downVol: "rgba(239, 83, 80, 0.45)", label: "绿涨红跌" };
-    }
-
-    function colorizeVolume(candles, volumes) {
-      const c = getColors();
-      return volumes.map((v, idx) => {
-        const bar = candles[idx];
-        const isUp = bar ? bar.close >= bar.open : true;
-        return { time: v.time, value: v.value, color: isUp ? c.upVol : c.downVol };
-      });
-    }
-
-    function applyColorScheme(recolorExisting) {
-      const c = getColors();
-      document.documentElement.style.setProperty("--up", c.up);
-      document.documentElement.style.setProperty("--down", c.down);
-      document.getElementById("btn-color-scheme").textContent = c.label;
-      candleSeries.applyOptions({
-        upColor: c.up, downColor: c.down, wickUpColor: c.up, wickDownColor: c.down,
-      });
-      if (recolorExisting && state.lastPayload) {
-        const volColored = colorizeVolume(state.lastPayload.candles, state.lastPayload.volume);
-        state.lastPayload.volume = volColored;
-        const lr = chart.timeScale().getVisibleLogicalRange();
-        volumeSeries.setData(volColored);
-        if (lr) chart.timeScale().setVisibleLogicalRange(lr);
-        const bars = state.lastPayload.candles;
-        const vols = state.lastPayload.volume;
-        updateLegend(state.lastCrosshairBar || bars[bars.length - 1], state.lastCrosshairVol || vols[vols.length - 1]);
-      }
-    }
 
     function renderToolbar() {
       const symBox = document.getElementById("symbol-buttons");
@@ -712,8 +671,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     chart.subscribeCrosshairMove((param) => {
       if (!state.lastPayload) return;
       if (!param || !param.time) {
-        state.lastCrosshairBar = null;
-        state.lastCrosshairVol = null;
         const candles = state.lastPayload.candles;
         const vols = state.lastPayload.volume;
         updateLegend(candles[candles.length - 1], vols[vols.length - 1]);
@@ -721,11 +678,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
       const c = param.seriesData.get(candleSeries);
       const v = param.seriesData.get(volumeSeries);
-      if (c) {
-        state.lastCrosshairBar = c;
-        state.lastCrosshairVol = v;
-        updateLegend(c, v);
-      }
+      if (c) updateLegend(c, v);
     });
 
     function applyVisibility() {
@@ -776,8 +729,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       const prevCandles = state.lastPayload ? state.lastPayload.candles : [];
       const newCandles = payload.candles;
-      const volColored = colorizeVolume(newCandles, payload.volume);
-      payload.volume = volColored;
+      const vols = payload.volume || [];
 
       const canIncrementalUpdate =
         sameSeries &&
@@ -787,7 +739,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       if (canIncrementalUpdate) {
         candleSeries.update(newCandles[newCandles.length - 1]);
-        volumeSeries.update(volColored[volColored.length - 1]);
+        volumeSeries.update(vols[vols.length - 1]);
         const ind = payload.indicators;
         if (ind.sma20.length) sma20Series.update(ind.sma20[ind.sma20.length - 1]);
         if (ind.sma60.length) sma60Series.update(ind.sma60[ind.sma60.length - 1]);
@@ -799,7 +751,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const logicalRange = sameSeries ? chart.timeScale().getVisibleLogicalRange() : null;
         chart.timeScale().applyOptions({ timeVisible: Boolean(meta.is_intraday) });
         candleSeries.setData(newCandles);
-        volumeSeries.setData(volColored);
+        volumeSeries.setData(vols);
         sma20Series.setData(payload.indicators.sma20 || []);
         sma60Series.setData(payload.indicators.sma60 || []);
         bbUpperSeries.setData(payload.indicators.bb_upper || []);
@@ -813,7 +765,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       state.lastKey = key;
       state.lastPayload = payload;
-      updateLegend(newCandles[newCandles.length - 1], volColored[volColored.length - 1]);
+      updateLegend(newCandles[newCandles.length - 1], vols[vols.length - 1]);
       applyVisibility();
 
       if (state.isStatic) setLiveStatus("static", `静态快照 (${meta.updated_at})`);
@@ -878,15 +830,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     };
     document.getElementById("btn-refresh").onclick = () => fetchAndRender(true);
     document.getElementById("btn-fit").onclick = () => chart.timeScale().fitContent();
-    document.getElementById("btn-color-scheme").onclick = () => {
-      state.colorScheme = state.colorScheme === "green_up" ? "red_up" : "green_up";
-      applyColorScheme(true);
-    };
     ["chk-sma20", "chk-sma60", "chk-bb", "chk-vol"].forEach((id) => {
       document.getElementById(id).onchange = applyVisibility;
     });
 
-    applyColorScheme(false);
     renderToolbar();
     if (INITIAL_PAYLOAD) applyPayload(INITIAL_PAYLOAD, false);
     else fetchAndRender(false);
@@ -1010,7 +957,6 @@ def cmd_serve(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
         "range": args.range,
         "strategy": args.strategy,
         "refresh": args.refresh,
-        "color_scheme": args.color_scheme,
         "symbols": defaults.get("symbols", []),
     }
     handler_cls = make_handler(defaults, app_config)
@@ -1019,7 +965,7 @@ def cmd_serve(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
     print(f"→ 黄金白银交互式 K 线看板已启动: {url}")
     print(
         f"  默认标的={app_config['symbol']} | 周期={app_config['interval']} | "
-        f"自动刷新={app_config['refresh']}s | 策略={app_config['strategy']} | 配色={app_config['color_scheme']}"
+        f"自动刷新={app_config['refresh']}s | 策略={app_config['strategy']}"
     )
     print("  按 Ctrl+C 停止服务。")
 
@@ -1061,7 +1007,6 @@ def cmd_export(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
         "range": payload["meta"]["range"],
         "strategy": args.strategy,
         "refresh": 0,
-        "color_scheme": args.color_scheme,
         "symbols": defaults.get("symbols", []),
     }
     html = render_html(app_config, initial_payload=payload, inline_lwc=True)
@@ -1089,7 +1034,6 @@ def main() -> None:
     sub = parser.add_subparsers(dest="mode", required=True)
 
     provider_choices = ["auto", *sorted(providers.VALID_PROVIDERS)]
-    color_choices = ["green_up", "red_up"]
 
     p_serve = sub.add_parser("serve", help="启动本地实时轮询 K 线看板")
     p_serve.add_argument("--symbol", default=defaults.get("default_symbol", "XAUUSD"), help="默认国际金银代码 (支持 provider:SYMBOL)")
@@ -1098,7 +1042,6 @@ def main() -> None:
     p_serve.add_argument("--range", default=defaults.get("default_range", "auto"), choices=sorted(providers.VALID_RANGES))
     p_serve.add_argument("--strategy", default=defaults.get("default_strategy", "sma_crossover"), choices=sorted(VALID_STRATEGIES))
     p_serve.add_argument("--refresh", type=int, default=int(defaults.get("default_refresh_seconds", 15)), help="自动刷新间隔(秒)，0为暂停")
-    p_serve.add_argument("--color-scheme", default=defaults.get("color_scheme", "green_up"), choices=color_choices)
     p_serve.add_argument("--host", default=defaults.get("default_host", "127.0.0.1"))
     p_serve.add_argument("--port", type=int, default=int(defaults.get("default_port", 8765)))
     p_serve.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
@@ -1111,7 +1054,6 @@ def main() -> None:
     p_exp.add_argument("--interval", default="1d", choices=sorted(providers.VALID_INTERVALS))
     p_exp.add_argument("--range", default="1y", choices=sorted(providers.VALID_RANGES))
     p_exp.add_argument("--strategy", default=defaults.get("default_strategy", "sma_crossover"), choices=sorted(VALID_STRATEGIES))
-    p_exp.add_argument("--color-scheme", default=defaults.get("color_scheme", "green_up"), choices=color_choices)
     p_exp.add_argument("-o", "--output", required=True, help="输出 HTML 文件路径")
     p_exp.add_argument("--open", action="store_true", help="导出后自动在浏览器打开")
     p_exp.set_defaults(func=cmd_export)
