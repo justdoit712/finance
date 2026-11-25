@@ -1,0 +1,27 @@
+{
+  "title": "全市场交互式 K 线看板",
+  "default_symbol": "yahoo:SPY",
+  "default_provider": "yahoo",
+  "default_interval": "1d",
+  "default_range": "auto",
+  "default_strategy": "sma_crossover",
+  "default_refresh_seconds": 15,
+  "color_scheme": "green_up",
+  "default_host": "127.0.0.1",
+  "default_port": 8765,
+  "symbols": [
+    {"symbol": "yahoo:SPY", "label": "标普500"},
+    {"symbol": "yahoo:AAPL", "label": "苹果"},
+    {"symbol": "eastmoney:600519", "label": "贵州茅台"},
+    {"symbol": "eastmoney:00700.HK", "label": "腾讯控股"},
+    {"symbol": "yahoo:GC=F", "label": "COMEX黄金"},
+    {"symbol": "binance:BTCUSDT", "label": "BTC/USDT"}
+  ],
+  "indicators": {
+    "sma_fast": 20,
+    "sma_slow": 60,
+    "bb_period": 20,
+    "bb_std": 2.0,
+    "rsi_period": 14
+  }
+}
