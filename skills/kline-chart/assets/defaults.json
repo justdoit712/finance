@@ -1,0 +1,28 @@
+{
+  "title": "加密货币实时 K 线看板",
+  "default_symbol": "binance:BTCUSDT",
+  "default_provider": "binance",
+  "default_interval": "15m",
+  "default_range": "auto",
+  "default_strategy": "sma_crossover",
+  "default_refresh_seconds": 5,
+  "color_scheme": "green_up",
+  "default_host": "127.0.0.1",
+  "default_port": 8765,
+  "symbols": [
+    {"symbol": "binance:BTCUSDT", "label": "BTC/USDT"},
+    {"symbol": "binance:ETHUSDT", "label": "ETH/USDT"},
+    {"symbol": "binance:SOLUSDT", "label": "SOL/USDT"},
+    {"symbol": "okx:BTC-USDT", "label": "OKX BTC"},
+    {"symbol": "yahoo:IBIT", "label": "比特币ETF"},
+    {"symbol": "yahoo:COIN", "label": "Coinbase"},
+    {"symbol": "yahoo:MSTR", "label": "MSTR"}
+  ],
+  "indicators": {
+    "sma_fast": 20,
+    "sma_slow": 60,
+    "bb_period": 20,
+    "bb_std": 2.0,
+    "rsi_period": 14
+  }
+}

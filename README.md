@@ -32,10 +32,11 @@ skills/
 │   ├── alpaca-trading/     # 加密货币实盘与模拟（Paper Trading）交易接口
 │   ├── alpaca-data/        # 加密资产实时 K 线 (Bars)、成交 (Trades) 与盘口快照
 │   └── tradingview/        # 全网交易所 (Binance/OKX等) 选币扫描与预计算技术指标
-├── [量化投研与计算引擎]
+├── [量化投研、可视化与计算引擎]
 │   ├── backtesting/        # 7×24h 策略全流程回测（30+ 风险指标、走步交叉验证）
 │   ├── portfolio/          # 多币种资产配置优化与 HRP 层次化风险平价
-│   └── option-pricing/     # 加密期权定价、隐含波动率（IV）曲面与偏度 (Skew) 分析
+│   ├── option-pricing/     # 加密期权定价、隐含波动率（IV）曲面与偏度 (Skew) 分析
+│   └── kline-chart/        # 7×24h 实时交互 K 线看板与离线 HTML 导出 (Lightweight Charts)
 └── [宏观流动性与长周期历史]
     ├── fred-macro/         # 美联储全球流动性时序 (资产负债表 WALCL, 货币量 M2)
     └── yahoo-finance/      # 主流币历史时序、加密 ETF (IBIT) 及概念股 (COIN/MSTR)
@@ -46,10 +47,11 @@ skills/
 - **[alpaca-data](./skills/alpaca-data/)**：专注加密货币行情流，通过 `download_crypto_bars.py` 获取加密货币分钟线、小时线与日线历史 K 线。
 - **[tradingview](./skills/tradingview/)**：全市场加密币种扫描器。直连主流交易所数据，内置 300+ 预计算字段（RSI、MACD、Stoch、布林带、成交量突破、波动率），支持多空全天候扫描。
 
-### 2. 底层量化策略与计算引擎 (Tools)
+### 2. 底层量化策略、可视化与计算引擎 (Tools)
 - **[backtesting](./skills/backtesting/)**：学术级 5 阶段回测框架，专为高波动资产优化。内置 30+ 种风险收益比率（夏普、索提诺、卡玛、最大回撤、CVaR 等）、10 大类技术指标、走步向前（Walk-forward）交叉验证与 t-Copula 极端前瞻模拟。
 - **[portfolio](./skills/portfolio/)**：用于求解多币种投资组合的最优配置权重。提供层次化风险平价（HRP）与嵌套聚类优化（NCO），有效解决加密资产之间的高相关性与协方差病态问题。
 - **[option-pricing](./skills/option-pricing/)**：用于 BTC/ETH 加密期权（对标 Deribit / OKX 期权）定价与对冲分析。支持 Black-Scholes、二叉树、蒙特卡洛及 Heston 随机波动率模型，计算 Greeks 与 IV 偏度。
+- **[kline-chart](./skills/kline-chart/)**：基于本地打包的 TradingView Lightweight Charts v4.2.3，原生直连 Binance / OKX 实时行情并兼容 Yahoo（IBIT / COIN / MSTR），支持 5 秒级无闪烁刷新、均线/布林带/策略买卖点叠加及离线静态 HTML 导出。
 
 ### 3. 宏观流动性与跨市场数据 (Macro & Cross-Asset)
 - **[fred-macro](./skills/fred-macro/)**：获取美联储全球流动性数据（资产负债表 `WALCL`、货币供应量 `WM2NS`、基准利率 `FEDFUNDS`），构建加密宏观周期顶底指标。
@@ -103,6 +105,15 @@ python skills/yahoo-finance/scripts/fetch_quote.py --tickers BTC-USD,ETH-USD,IBI
 ```bash
 # 运行层次化风险平价 (HRP)
 python skills/portfolio/scripts/cli.py hrp
+```
+
+### 5. 启动加密货币实时交互 K 线看板
+```bash
+# 启动本地实时看板（默认 Binance BTCUSDT 15分钟线，每 5 秒自动刷新）
+python skills/kline-chart/scripts/kline_chart.py serve
+
+# 导出单文件离线交互 K 线 HTML
+python skills/kline-chart/scripts/kline_chart.py export --symbol binance:BTCUSDT --interval 1h --range 1mo -o D:/empty/btc_kline.html
 ```
 
 
