@@ -1,10 +1,10 @@
-# 01 分支 — 黄金与白银专属量化投研系统 (Precious Metals Quant System)
+# 01-gold-silver 分支 — 黄金与白银专属量化投研系统 (Precious Metals Quant System)
 
-[![Branch: 01](https://img.shields.io/badge/branch-01-gold.svg)](https://github.com/justdoit712/finance/tree/01)
+[![Branch: 01-gold-silver](https://img.shields.io/badge/branch-01--gold--silver-gold.svg)](https://github.com/justdoit712/finance/tree/01-gold-silver)
 [![Base: main](https://img.shields.io/badge/root_base-main-blue.svg)](https://github.com/justdoit712/finance/tree/main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-本项目 `01` 分支专精于**黄金与白银（Gold & Silver / 贵金属）**的量化投研体系。在主干 `main`（保留全量 26 个通用技能）的基础上，精炼保留了 6 个与大宗商品、宏观因子及量化投研密切相关的顶级计算与数据引擎，移除了无关的个股与微观财报模块，打造高纯度、工程化的贵金属量化投研系统。
+本项目 `01-gold-silver` 分支专精于**黄金与白银（Gold & Silver / 贵金属）**的量化投研体系。在主干 `main`（保留全量 26 个通用技能）的基础上，精炼保留了 6 个与大宗商品、宏观因子及量化投研密切相关的顶级计算与数据引擎，移除了无关的个股与微观财报模块，打造高纯度、工程化的贵金属量化投研系统。
 
 ---
 
@@ -53,7 +53,7 @@ skills/
 
 ## 三、 核心投研方法论与策略规划
 
-在 `01` 分支中，主要针对贵金属的两大特性（商品属性 + 货币金融属性）构建以下量化策略体系：
+在 `01-gold-silver` 分支中，主要针对贵金属的两大特性（商品属性 + 货币金融属性）构建以下量化策略体系：
 
 ### 1. 金银比均值回归与配对交易 (Gold-Silver Ratio, GSR)
 - **逻辑**：金银比反映了黄金（货币避险）与白银（工业弹性）的相对强弱。历史中枢在 50~90 之间波动。
@@ -104,4 +104,4 @@ python skills/option-pricing/scripts/option_pricing.py validate
 ## 五、 分支管理说明
 
 - **`main` 分支**：项目主干，完整保留全部 26 个量化技能（含美股、期权、全球 39 国股票市场、基本面财报等全量代码）。
-- **`01` 分支**：当前分支，专精于黄金白银贵金属量化投研。
+- **`01-gold-silver` 分支**：当前分支，专精于黄金白银贵金属量化投研。
