@@ -1,0 +1,30 @@
+{
+  "title": "黄金白银交互 K 线看板",
+  "default_symbol": "yahoo:GC=F",
+  "default_provider": "yahoo",
+  "default_interval": "1h",
+  "default_range": "auto",
+  "default_strategy": "sma_crossover",
+  "default_refresh_seconds": 15,
+  "color_scheme": "green_up",
+  "default_host": "127.0.0.1",
+  "default_port": 8765,
+  "symbols": [
+    {"symbol": "yahoo:GC=F", "label": "COMEX 黄金"},
+    {"symbol": "yahoo:SI=F", "label": "COMEX 白银"},
+    {"symbol": "yahoo:XAUUSD=X", "label": "伦敦金"},
+    {"symbol": "yahoo:XAGUSD=X", "label": "伦敦银"},
+    {"symbol": "yahoo:GLD", "label": "黄金ETF"},
+    {"symbol": "yahoo:SLV", "label": "白银ETF"},
+    {"symbol": "yahoo:GDX", "label": "金矿ETF"},
+    {"symbol": "eastmoney:518880", "label": "国内黄金ETF"},
+    {"symbol": "binance:PAXGUSDT", "label": "24h锚定金"}
+  ],
+  "indicators": {
+    "sma_fast": 20,
+    "sma_slow": 60,
+    "bb_period": 20,
+    "bb_std": 2.0,
+    "rsi_period": 14
+  }
+}

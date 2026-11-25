@@ -23,26 +23,28 @@
 
 ---
 
-## 二、 保留的 6 大核心量化技能 (Retained Core Skills)
+## 二、 核心量化技能与功能模块 (Core Skills)
 
 全部技能遵循 [SKILL.md](https://skills.sh) 规范，代码高度轻量化，无重型第三方金融包依赖。
 
 ```
 skills/
-├── [量化投研与计算引擎]
+├── [量化投研、可视化与计算引擎]
 │   ├── backtesting/        # 学术级全流程量化回测与压力测试引擎
 │   ├── portfolio/          # 投资组合构建与层次化风险平价 (HRP/HERC/NCO)
-│   └── option-pricing/     # 纯 NumPy 极速期权定价与波动率偏度 (41.9万次/秒)
+│   ├── option-pricing/     # 纯 NumPy 极速期权定价与波动率偏度 (41.9万次/秒)
+│   └── kline-chart/        # 交互式实时 K 线看板与离线 HTML 导出 (Lightweight Charts)
 └── [行情与宏观数据源]
     ├── yahoo-finance/      # 黄金白银全品种行情拉取 (现货、期货、ETF、矿业股)
     ├── fred-macro/         # 美联储宏观经济时序 (实际利率、美元指数、通胀)
     └── tradingview/        # 大宗商品全品种技术指标预计算扫描
 ```
 
-### 1. 量化计算与回测引擎 (Tools)
+### 1. 量化计算、可视化与回测引擎 (Tools)
 - **[backtesting](./skills/backtesting/)**：完整实现 5 阶段回测方法论（数据→研究→度量→调参→验证）。内置 30+ 种风险收益比率（夏普、索提诺、卡玛、凯利、最大回撤、Ulcer、Rachev、CVaR 等）、10 大类技术指标、Johnson SU + t-Copula 前瞻模拟、Walk-forward 走步验证与情景压力测试。
 - **[portfolio](./skills/portfolio/)**：用于计算黄金白银在全天候配置（如桥水全天候）或多元资产组合中的最优仓位比重。支持马科维茨有效前沿、Black-Litterman 贝叶斯后验、层次化风险平价（HRP / HERC）及带约束的嵌套聚类优化（NCO）。
 - **[option-pricing](./skills/option-pricing/)**：用于 GLD / SLV 期权、黄金期货期权的定价与波动率偏度（Skew）分析。支持 Black-Scholes、CRR 二叉树、三叉树、蒙特卡洛（对偶变量）、美式 Longstaff-Schwartz、Heston 随机波动率模型与 Bates 跳跃扩散模型。
+- **[kline-chart](./skills/kline-chart/)**：基于本地打包的 TradingView Lightweight Charts v4.2.3，支持启动本地实时轮询 K 线看板（无闪烁自动刷新、快捷切换金银期货/现货/ETF/国内黄金ETF/24h锚定金、叠加均线/布林带/策略买卖点信号），并支持导出离线单文件静态 HTML。
 
 ### 2. 核心数据源 (Data)
 - **[yahoo-finance](./skills/yahoo-finance/)**：免 API Key、免认证，稳定抓取黄金白银现货（`XAUUSD=X`, `XAGUSD=X`）、COMEX 期货（`GC=F`, `SI=F`）、ETF（`GLD`, `SLV`）和矿业股（`GDX`）的日线与日内 OHLCV。
@@ -97,6 +99,15 @@ python skills/backtesting/scripts/backtesting.py validate
 ```bash
 # 期权定价与数学验证
 python skills/option-pricing/scripts/option_pricing.py validate
+```
+
+### 5. 启动黄金白银交互式实时 K 线看板
+```bash
+# 启动本地实时看板（默认 COMEX 黄金 GC=F 1小时线，每 15 秒自动刷新）
+python skills/kline-chart/scripts/kline_chart.py serve
+
+# 导出单文件离线交互 K 线 HTML
+python skills/kline-chart/scripts/kline_chart.py export --symbol yahoo:GC=F --interval 1d --range 1y -o D:/empty/gc_kline.html
 ```
 
 ---
