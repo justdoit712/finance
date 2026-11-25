@@ -71,7 +71,7 @@ def load_defaults() -> dict[str, Any]:
         "default_interval": "1h",
         "default_range": "auto",
         "default_strategy": "sma_crossover",
-        "default_refresh_seconds": 30,
+        "default_refresh_seconds": 10,
         "default_host": "127.0.0.1",
         "default_port": 8765,
         "symbols": [
@@ -494,7 +494,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <select id="provider-select" title="数据源适配器">
           <option value="auto">源: 自动推断</option>
           <option value="yahoo">Yahoo (COMEX期货/ETF)</option>
-          <option value="eastmoney">国际现货/期货实时 (XAU/COMEX)</option>
+          <option value="eastmoney">东方财富 (COMEX/现货)</option>
+          <option value="sina">新浪现货 (XAU/XAG)</option>
+          <option value="twelvedata">Twelve Data (需Key)</option>
           <option value="binance">Binance 24h锚定金</option>
           <option value="okx">OKX 24h锚定金</option>
         </select>
@@ -535,6 +537,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <select id="refresh-select" title="自动刷新间隔">
           <option value="0">刷新: 暂停</option>
           <option value="5">刷新: 5s</option>
+          <option value="10">刷新: 10s</option>
           <option value="15">刷新: 15s</option>
           <option value="30">刷新: 30s</option>
           <option value="60">刷新: 60s</option>
@@ -793,7 +796,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       else setLiveStatus("paused", `已暂停自动刷新 · ${meta.updated_at}`);
     }
 
-    async function fetchAndRender(isTimerRefresh) {
+    async function fetchAndRender(forceReload) {
       if (state.isStatic || state.loading) return;
       state.loading = true;
       try {
@@ -804,13 +807,105 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           range: state.range,
           strategy: state.strategy,
         });
+        if (forceReload) qs.set("refresh", "1");
         const resp = await fetch(`/api/kline?${qs.toString()}`);
         const data = await resp.json();
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-        applyPayload(data, isTimerRefresh);
+        applyPayload(data, Boolean(forceReload));
       } catch (err) {
         setLiveStatus("error", `拉取失败: ${err.message}`);
         showError(`拉取 ${state.symbol} 失败: ${err.message}`);
+      } finally {
+        state.loading = false;
+      }
+    }
+
+    function applyTick(tick) {
+      showError("");
+      const meta = tick.meta;
+      const key = `${meta.provider}|${meta.symbol}|${meta.interval}|${meta.range}|${meta.strategy}`;
+      if (!state.lastPayload || key !== state.lastKey) {
+        fetchAndRender(false);
+        return;
+      }
+
+      const priceEl = document.getElementById("hdr-price");
+      const chgEl = document.getElementById("hdr-change");
+      const upDown = meta.change >= 0 ? "up" : "down";
+      const sign = meta.change >= 0 ? "+" : "";
+      priceEl.textContent = `${meta.last_price} ${meta.currency || ""}`.trim();
+      priceEl.className = `price-big ${upDown}`;
+      chgEl.textContent = `${sign}${meta.change} (${sign}${meta.change_pct}%)`;
+      chgEl.className = upDown;
+
+      document.getElementById("meta-summary").textContent =
+        `K线: ${meta.bar_count} 根 | 信号: ${tick.markers.length} 次 | 数据源: ${meta.source} | 更新于: ${meta.updated_at}`;
+
+      const bars = state.lastPayload.candles;
+      const vols = state.lastPayload.volume;
+      const indState = state.lastPayload.indicators;
+      const newC = tick.candle;
+      const newV = tick.volume;
+
+      if (bars.length > 0 && newC.time === bars[bars.length - 1].time) {
+        bars[bars.length - 1] = newC;
+        if (vols.length > 0) vols[vols.length - 1] = newV;
+      } else if (bars.length === 0 || newC.time > bars[bars.length - 1].time) {
+        bars.push(newC);
+        vols.push(newV);
+      }
+
+      candleSeries.update(newC);
+      volumeSeries.update(newV);
+
+      const tInd = tick.indicators || {};
+      const seriesPairs = [
+        ["sma20", sma20Series],
+        ["sma60", sma60Series],
+        ["bb_upper", bbUpperSeries],
+        ["bb_mid", bbMidSeries],
+        ["bb_lower", bbLowerSeries],
+      ];
+      seriesPairs.forEach(([k, ser]) => {
+        const pt = tInd[k];
+        if (!pt) return;
+        const arr = indState[k] || (indState[k] = []);
+        if (arr.length > 0 && arr[arr.length - 1].time === pt.time) arr[arr.length - 1] = pt;
+        else if (arr.length === 0 || pt.time > arr[arr.length - 1].time) arr.push(pt);
+        ser.update(pt);
+      });
+
+      candleSeries.setMarkers(tick.markers || []);
+      state.lastPayload.markers = tick.markers || [];
+      state.lastPayload.meta = meta;
+      updateLegend(newC, newV);
+
+      if (tick.gsr) renderGsrCard(tick.gsr);
+      if (state.refreshSec > 0) setLiveStatus("", `实时轮询中 · 每 ${state.refreshSec}s · ${meta.updated_at}`);
+    }
+
+    async function fetchTick() {
+      if (state.isStatic || state.loading) return;
+      if (!state.lastPayload) {
+        await fetchAndRender(false);
+        return;
+      }
+      state.loading = true;
+      try {
+        const qs = new URLSearchParams({
+          symbol: state.symbol,
+          provider: state.provider,
+          interval: state.interval,
+          range: state.range,
+          strategy: state.strategy,
+        });
+        const resp = await fetch(`/api/tick?${qs.toString()}`);
+        const data = await resp.json();
+        if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+        applyTick(data);
+      } catch (err) {
+        setLiveStatus("error", `刷新失败: ${err.message}`);
+        showError(`刷新 ${state.symbol} 失败: ${err.message}`);
       } finally {
         state.loading = false;
       }
@@ -825,7 +920,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById("gsr-sub").textContent = `Z ${zSign}${g.z_1y.toFixed(2)} · ${g.pct_1y.toFixed(0)}%分位`;
       if (Math.abs(g.z_1y) >= 2.0) card.classList.add("extreme");
       else card.classList.remove("extreme");
-      card.title = `伦敦金 ${g.xau} / 伦敦银 ${g.xag} | 近1年均值 ${g.mean_1y} (区间 ${g.min_1y}~${g.max_1y}) | 点击查看 GSR 走势`;
+      const srcTxt = g.source ? ` (${g.source})` : "";
+      card.title = `伦敦金 ${g.xau} / 伦敦银 ${g.xag}${srcTxt} | 近1年均值 ${g.mean_1y} (区间 ${g.min_1y}~${g.max_1y}) | 点击查看 GSR 走势`;
     }
 
     async function fetchGsrCard() {
@@ -841,10 +937,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     function resetTimer() {
       if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
       if (!state.isStatic && state.refreshSec > 0) {
-        state.timerId = setInterval(() => {
-          fetchAndRender(true);
-          fetchGsrCard();
-        }, state.refreshSec * 1000);
+        state.timerId = setInterval(() => fetchTick(), state.refreshSec * 1000);
       }
     }
 
@@ -976,6 +1069,56 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
                     )
                 return
 
+            if path == "/api/tick":
+                qs = urllib.parse.parse_qs(parsed.query)
+                symbol = (qs.get("symbol", [app_config["symbol"]])[0] or app_config["symbol"]).strip()
+                provider = (qs.get("provider", [app_config.get("provider", "auto")])[0] or "auto").strip()
+                interval = (qs.get("interval", [app_config["interval"]])[0] or app_config["interval"]).strip()
+                range_str = (qs.get("range", [app_config["range"]])[0] or app_config["range"]).strip()
+                strategy = (qs.get("strategy", [app_config["strategy"]])[0] or app_config["strategy"]).strip()
+                try:
+                    raw_data = providers.fetch_ohlcv(
+                        symbol_spec=symbol,
+                        interval=interval,
+                        range_str=range_str,
+                        provider=provider,
+                        default_provider=default_provider,
+                    )
+                    payload = build_kline_payload(raw_data, strategy=strategy, defaults=defaults)
+                    try:
+                        gsr_data = providers.compute_gsr_snapshot()
+                    except Exception:
+                        gsr_data = None
+                    tick_out = {
+                        "meta": payload["meta"],
+                        "candle": payload["candles"][-1],
+                        "volume": payload["volume"][-1],
+                        "indicators": {
+                            k: (v[-1] if v else None)
+                            for k, v in payload["indicators"].items()
+                        },
+                        "markers": payload["markers"],
+                        "gsr": gsr_data,
+                    }
+                    self._send_bytes(
+                        200,
+                        "application/json; charset=utf-8",
+                        json.dumps(tick_out, ensure_ascii=False).encode("utf-8"),
+                    )
+                except ValueError as exc:
+                    self._send_bytes(
+                        400,
+                        "application/json; charset=utf-8",
+                        json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"),
+                    )
+                except Exception as exc:
+                    self._send_bytes(
+                        502,
+                        "application/json; charset=utf-8",
+                        json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"),
+                    )
+                return
+
             if path == "/api/kline":
                 qs = urllib.parse.parse_qs(parsed.query)
                 symbol = (qs.get("symbol", [app_config["symbol"]])[0] or app_config["symbol"]).strip()
@@ -983,6 +1126,7 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
                 interval = (qs.get("interval", [app_config["interval"]])[0] or app_config["interval"]).strip()
                 range_str = (qs.get("range", [app_config["range"]])[0] or app_config["range"]).strip()
                 strategy = (qs.get("strategy", [app_config["strategy"]])[0] or app_config["strategy"]).strip()
+                force_refresh = (qs.get("refresh", ["0"])[0] == "1")
 
                 try:
                     raw_data = providers.fetch_ohlcv(
@@ -991,6 +1135,7 @@ def make_handler(defaults: dict[str, Any], app_config: dict[str, Any]):
                         range_str=range_str,
                         provider=provider,
                         default_provider=default_provider,
+                        force_refresh=force_refresh,
                     )
                     payload = build_kline_payload(raw_data, strategy=strategy, defaults=defaults)
                     self._send_bytes(

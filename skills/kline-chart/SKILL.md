@@ -27,11 +27,11 @@ skills/kline-chart/
 
 ## 支持的国际金银标的与数据路由 (`provider:SYMBOL`)
 
-> 注：Yahoo Finance 对 `XAUUSD=X` / `XAGUSD=X` 存在 404 问题，本模块已自动将国际现货 `XAUUSD` / `XAGUSD` 与实时连续期货 `GC00Y` / `SI00Y` 路由至直连国际行情流（USD 计价）。
+> 注：国际现货 `XAUUSD` / `XAGUSD` 采用**动静分离架构**——历史 K 线底图长缓存 10 分钟（支持可选 `TWELVEDATA_API_KEY` 优先、东财/新浪自动兜底），盘中每 10 秒轮询通过 `/api/tick` 直连 **Swissquote 瑞讯银行 BBO 实时报价**推进最后一根 K 线与顶部 `GSR` 卡片，兼顾真实时性与抗限流能力。
 
 | 资产类别 | 标的代码 | 数据源 (`provider`) | 说明 |
 |---|---|---|---|
-| **伦敦现货 (Spot)** | `XAUUSD`、`XAGUSD` | `eastmoney` (自动路由) | 伦敦金 / 伦敦银国际现货连续价格（USD） |
+| **伦敦现货 (Spot)** | `XAUUSD`、`XAGUSD` | `spot` (Swissquote 实时 + 历史长缓存) | 伦敦金 / 伦敦银国际现货连续价格（USD） |
 | **金银比 (GSR)** | `GSR` (`XAU/XAG`) | `ratio` (自动合成) | 实时金银比 K 线走势，顶部状态栏同步显示 1 年分位数与 Z-Score |
 | **COMEX 主连 / 微型期货** | `GC=F`、`SI=F`、`MGC=F`、`SIL=F` | `yahoo` | COMEX 黄金/白银主连与微型期货 |
 | **COMEX 实时连续期货** | `GC00Y`、`SI00Y` | `eastmoney` (自动路由) | COMEX 黄金/白银连续实时分时与日线 |

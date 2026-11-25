@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import re
 import threading
 import time
@@ -35,7 +36,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-VALID_PROVIDERS = {"yahoo", "eastmoney", "sina", "binance", "okx", "ratio", "csv"}
+VALID_PROVIDERS = {"yahoo", "eastmoney", "sina", "twelvedata", "binance", "okx", "ratio", "spot", "csv"}
 VALID_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
 INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h"}
 VALID_RANGES = {"auto", "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
@@ -66,6 +67,8 @@ EASTMONEY_URLS = [
     "https://push2his.eastmoney.com/api/qt/stock/kline/get",
 ]
 SINA_FUTURES_BASE = "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/GlobalFuturesService"
+SWISSQUOTE_BBO_URL = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument"
+TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 OKX_URL = "https://www.okx.com/api/v5/market/candles"
 
 _CN_TZ = timezone(timedelta(hours=8))
@@ -105,10 +108,14 @@ _INTL_DISPLAY_NAMES = {
 
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[tuple[str, str, str, str, str], tuple[float, dict[str, Any]]] = {}
+_HIST_CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
+_TICK_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _STALE_CACHE: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
 CACHE_TTL_SECONDS = 12.0
+HIST_CACHE_TTL_SECONDS = 600.0
+TICK_CACHE_TTL_SECONDS = 3.0
 _GSR_HIST_CACHE: tuple[float, list[float]] | None = None
-_GSR_HIST_TTL_SECONDS = 300.0
+_GSR_HIST_TTL_SECONDS = 600.0
 _EM_COOLDOWN_UNTIL = 0.0
 _EM_COOLDOWN_SECONDS = 120.0
 
@@ -236,8 +243,13 @@ def parse_symbol(
     if su in ("GSR", "XAU/XAG", "XAUXAG", "RATIO:GSR"):
         return "ratio", "GSR"
 
+    if su in _SPOT_YAHOO_FALLBACK_SET or su in ("SPOT:XAU", "SPOT:XAG"):
+        clean_spot = "XAUUSD" if "XAU" in su else "XAGUSD"
+        if explicit_provider and explicit_provider.lower() not in ("", "auto", "yahoo", "spot"):
+            return explicit_provider.lower(), clean_spot
+        return "spot", clean_spot
+
     if su in _INTL_EM_ALIASES:
-        # 避免 Yahoo Finance 对 XAUUSD=X / XAGUSD=X 返回 404
         if explicit_provider and explicit_provider.lower() not in ("", "auto", "yahoo"):
             return explicit_provider.lower(), su
         return "eastmoney", su
@@ -248,11 +260,13 @@ def parse_symbol(
         if p_low in VALID_PROVIDERS:
             sym_val = rest.strip() if p_low == "csv" else rest.strip().upper()
             if p_low == "yahoo" and sym_val in _SPOT_YAHOO_FALLBACK_SET:
-                return "eastmoney", sym_val
+                clean_spot = "XAUUSD" if "XAU" in sym_val else "XAGUSD"
+                return "spot", clean_spot
             if explicit_provider and explicit_provider not in ("", "auto"):
                 ep = explicit_provider.lower()
                 if ep == "yahoo" and sym_val in _SPOT_YAHOO_FALLBACK_SET:
-                    return "eastmoney", sym_val
+                    clean_spot = "XAUUSD" if "XAU" in sym_val else "XAGUSD"
+                    return "spot", clean_spot
                 return ep, sym_val
             return p_low, sym_val
 
@@ -756,6 +770,282 @@ def fetch_sina_spot_ohlcv(symbol: str, interval: str = "1h", range_str: str | No
     }
 
 
+# ── 2.6 Swissquote 实时现货报价 + Twelve Data 历史 + 动静分离合成 ───────────
+
+_SQ_PAIR_MAP = {
+    "XAUUSD": ("XAU", "XAUUSD", "伦敦金现货 (XAUUSD)"),
+    "XAU": ("XAU", "XAUUSD", "伦敦金现货 (XAUUSD)"),
+    "XAGUSD": ("XAG", "XAGUSD", "伦敦银现货 (XAGUSD)"),
+    "XAG": ("XAG", "XAGUSD", "伦敦银现货 (XAGUSD)"),
+}
+
+_TD_INTERVAL_MAP = {
+    "1m": "1min",
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1day",
+    "1wk": "1week",
+    "1mo": "1month",
+}
+
+_SPOT_BUCKET_SEC = {
+    "1m": 60,
+    "2m": 120,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "1h": 3600,
+    "4h": 14400,
+}
+
+
+def fetch_swissquote_quote(symbol: str) -> dict[str, Any]:
+    """拉取瑞士瑞讯银行公开 BBO 实时买一/卖一及中间价（免 Key、极低延迟）。"""
+    su = symbol.strip().upper()
+    if su not in _SQ_PAIR_MAP:
+        raise ValueError(f"Swissquote 仅支持 XAUUSD / XAGUSD，收到 '{symbol}'")
+    sq_code, clean_code, _ = _SQ_PAIR_MAP[su]
+
+    now = time.time()
+    with _CACHE_LOCK:
+        cached = _TICK_CACHE.get(sq_code)
+        if cached and (now - cached[0]) < TICK_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    raw = _http_get_json(f"{SWISSQUOTE_BBO_URL}/{sq_code}/USD", timeout=8)
+    if not isinstance(raw, list) or not raw:
+        raise RuntimeError(f"Swissquote 未返回 {clean_code} 报价")
+
+    best_bid: float | None = None
+    best_ask: float | None = None
+    priority = {"prime": 0, "elite": 1, "premium": 2, "standard": 3}
+    for entry in raw:
+        profiles = entry.get("spreadProfilePrices") if isinstance(entry, dict) else None
+        if not isinstance(profiles, list) or not profiles:
+            continue
+        sorted_prof = sorted(profiles, key=lambda p: priority.get(str(p.get("spreadProfile", "")).lower(), 99))
+        for p in sorted_prof:
+            b, a = p.get("bid"), p.get("ask")
+            if _is_finite(b) and _is_finite(a) and float(b) > 0 and float(a) > 0:
+                best_bid = float(b)
+                best_ask = float(a)
+                break
+        if best_bid is not None:
+            break
+
+    if best_bid is None or best_ask is None:
+        raise RuntimeError(f"Swissquote 未解析出 {clean_code} 有效买卖价")
+
+    mid = (best_bid + best_ask) / 2.0
+    quote = {
+        "symbol": clean_code,
+        "bid": best_bid,
+        "ask": best_ask,
+        "mid": round(mid, 4),
+        "ts": int(now),
+        "source": "swissquote(BBO)",
+    }
+    with _CACHE_LOCK:
+        _TICK_CACHE[sq_code] = (now, quote)
+    return quote
+
+
+def fetch_twelvedata_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
+    """可选 Twelve Data 正规历史 K 线源（读取环境变量 TWELVEDATA_API_KEY）。"""
+    api_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("Twelve Data 数据源需要设置环境变量 TWELVEDATA_API_KEY")
+    if interval not in _TD_INTERVAL_MAP:
+        raise ValueError(f"Twelve Data 不支持周期 '{interval}'，可选: {sorted(_TD_INTERVAL_MAP)}")
+
+    su = symbol.strip().upper()
+    if su in _SQ_PAIR_MAP:
+        sq_code, clean_code, display_name = _SQ_PAIR_MAP[su]
+        td_sym = f"{sq_code}/USD"
+    else:
+        td_sym = su
+        clean_code = su
+        display_name = su
+
+    resolved_range = resolve_range(interval, range_str)
+    outputsize = min(_EM_RANGE_LMT.get(resolved_range, 260), 500)
+    raw = _http_get_json(
+        TWELVEDATA_URL,
+        params={
+            "symbol": td_sym,
+            "interval": _TD_INTERVAL_MAP[interval],
+            "outputsize": str(outputsize),
+            "timezone": "UTC",
+            "apikey": api_key,
+        },
+        timeout=12,
+    )
+    if not isinstance(raw, dict) or raw.get("status") == "error" or not raw.get("values"):
+        msg = raw.get("message") if isinstance(raw, dict) else str(raw)
+        raise RuntimeError(f"Twelve Data 返回错误 ({td_sym}): {msg}")
+
+    is_intraday = interval in INTRADAY_INTERVALS
+    raw_bars: list[dict[str, Any]] = []
+    for row in raw["values"]:
+        dt_str = str(row.get("datetime", "")).strip()
+        if not dt_str:
+            continue
+        if len(dt_str) > 10:
+            dt = datetime.strptime(dt_str[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            ts = int(dt.timestamp())
+            date_str = dt.strftime("%Y-%m-%d")
+        else:
+            dt = datetime.strptime(dt_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            ts = int(dt.timestamp())
+            date_str = dt_str[:10]
+        raw_bars.append(
+            {
+                "ts": ts,
+                "date_str": date_str,
+                "open": row.get("open"),
+                "high": row.get("high"),
+                "low": row.get("low"),
+                "close": row.get("close"),
+                "volume": row.get("volume", 0),
+            }
+        )
+
+    bars = _sanitize_bars(raw_bars, is_intraday=is_intraday)
+    if not bars:
+        raise RuntimeError(f"Twelve Data 未解析出 {td_sym} 有效 K 线")
+
+    return {
+        "provider": "twelvedata",
+        "symbol": clean_code,
+        "display_name": display_name,
+        "currency": "USD",
+        "exchange": "SPOT",
+        "interval": interval,
+        "range": range_str or "auto",
+        "resolved_range": resolved_range,
+        "is_intraday": is_intraday,
+        "last_price": bars[-1]["close"],
+        "prev_close": bars[-2]["close"] if len(bars) >= 2 else bars[0]["open"],
+        "bars": bars,
+        "source": "twelvedata",
+    }
+
+
+def _get_spot_history(
+    clean_code: str,
+    interval: str,
+    range_str: str | None,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """低频获取国际现货历史底图并长缓存（默认 10 分钟），避免触发上游限流。"""
+    resolved_range = resolve_range(interval, range_str)
+    hkey = (clean_code, interval, resolved_range)
+    now = time.time()
+
+    if not force_refresh:
+        with _CACHE_LOCK:
+            cached = _HIST_CACHE.get(hkey)
+            if cached and (now - cached[0]) < HIST_CACHE_TTL_SECONDS:
+                return cached[1]
+
+    errors: list[str] = []
+    hist: dict[str, Any] | None = None
+
+    if os.getenv("TWELVEDATA_API_KEY", "").strip() and interval in _TD_INTERVAL_MAP:
+        try:
+            hist = fetch_twelvedata_ohlcv(clean_code, interval=interval, range_str=range_str)
+        except Exception as exc:
+            errors.append(f"twelvedata: {exc}")
+
+    if hist is None:
+        try:
+            hist = fetch_eastmoney_ohlcv(clean_code, interval=interval, range_str=range_str)
+        except Exception as exc:
+            errors.append(f"eastmoney: {exc}")
+
+    if hist is None:
+        try:
+            hist = fetch_sina_spot_ohlcv(clean_code, interval=interval, range_str=range_str)
+        except Exception as exc:
+            errors.append(f"sina: {exc}")
+
+    if hist is None:
+        with _CACHE_LOCK:
+            old = _HIST_CACHE.get(hkey)
+        if old is not None:
+            return old[1]
+        raise RuntimeError(f"获取 {clean_code} 历史底图失败: {'; '.join(errors)}")
+
+    with _CACHE_LOCK:
+        _HIST_CACHE[hkey] = (now, hist)
+    return hist
+
+
+def _merge_live_tick_into_bars(
+    hist_result: dict[str, Any],
+    live_mid: float,
+    tick_ts: int,
+    tick_source: str,
+) -> dict[str, Any]:
+    """将 Swissquote 实时中间价无破坏地合并至历史 K 线尾部（或滚出新周期 Bar）。"""
+    out = dict(hist_result)
+    bars = [dict(b) for b in hist_result["bars"]]
+    px = round(float(live_mid), 4)
+    interval = hist_result["interval"]
+
+    if bars:
+        if hist_result["is_intraday"]:
+            b_sec = _SPOT_BUCKET_SEC.get(interval, 3600)
+            b_ts = (int(tick_ts) // b_sec) * b_sec
+            last_ts = int(bars[-1]["time"])
+            if b_ts == last_ts:
+                bars[-1]["close"] = px
+                bars[-1]["high"] = round(max(float(bars[-1]["high"]), px), 6)
+                bars[-1]["low"] = round(min(float(bars[-1]["low"]), px), 6)
+            elif b_ts > last_ts:
+                bars.append({"time": b_ts, "open": px, "high": px, "low": px, "close": px, "volume": 0.0})
+        elif interval == "1d":
+            today_str = datetime.fromtimestamp(int(tick_ts), tz=_CN_TZ).strftime("%Y-%m-%d")
+            last_date = str(bars[-1]["time"])
+            if today_str == last_date:
+                bars[-1]["close"] = px
+                bars[-1]["high"] = round(max(float(bars[-1]["high"]), px), 6)
+                bars[-1]["low"] = round(min(float(bars[-1]["low"]), px), 6)
+            elif today_str > last_date:
+                bars.append({"time": today_str, "open": px, "high": px, "low": px, "close": px, "volume": 0.0})
+        else:
+            bars[-1]["close"] = px
+            bars[-1]["high"] = round(max(float(bars[-1]["high"]), px), 6)
+            bars[-1]["low"] = round(min(float(bars[-1]["low"]), px), 6)
+
+    out["bars"] = bars
+    out["last_price"] = px
+    out["source"] = f"{hist_result['source']} + {tick_source}"
+    return out
+
+
+def fetch_spot_composite(
+    symbol: str,
+    interval: str = "1h",
+    range_str: str | None = "auto",
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """动静分离国际现货主通道：低频长缓存历史底图 + Swissquote 银行间实时跳动价。"""
+    su = symbol.strip().upper()
+    clean_code = "XAUUSD" if "XAU" in su else "XAGUSD"
+    hist = _get_spot_history(clean_code, interval=interval, range_str=range_str, force_refresh=force_refresh)
+    try:
+        q = fetch_swissquote_quote(clean_code)
+        return _merge_live_tick_into_bars(hist, q["mid"], q["ts"], q["source"])
+    except Exception:
+        out = dict(hist)
+        out["bars"] = [dict(b) for b in hist["bars"]]
+        return out
+
+
 # ── 3. Binance 适配器（24h 链上锚定黄金代币 PAXGUSDT） ────────────────────────
 
 _BN_INTERVAL_MAP = {
@@ -1031,10 +1321,14 @@ def load_csv_ohlcv(csv_path: str, symbol: str | None = None) -> dict[str, Any]:
 
 # ── 5.5 金银比 (GSR) 合成序列与实时统计 ───────────────────────────────────────
 
-def fetch_gsr_ohlcv(interval: str = "1h", range_str: str | None = "auto") -> dict[str, Any]:
+def fetch_gsr_ohlcv(
+    interval: str = "1h",
+    range_str: str | None = "auto",
+    force_refresh: bool = False,
+) -> dict[str, Any]:
     """基于伦敦金 (XAUUSD) 与伦敦银 (XAGUSD) 对齐时间戳合成金银比 K 线序列。"""
-    xau = fetch_ohlcv("XAUUSD", interval=interval, range_str=range_str, use_cache=True)
-    xag = fetch_ohlcv("XAGUSD", interval=interval, range_str=range_str, use_cache=True)
+    xau = fetch_spot_composite("XAUUSD", interval=interval, range_str=range_str, force_refresh=force_refresh)
+    xag = fetch_spot_composite("XAGUSD", interval=interval, range_str=range_str, force_refresh=force_refresh)
 
     ag_map = {b["time"]: b for b in xag["bars"]}
     bars: list[dict[str, Any]] = []
@@ -1092,8 +1386,8 @@ def compute_gsr_snapshot() -> dict[str, Any]:
     if hist_cached and (now - hist_cached[0]) < _GSR_HIST_TTL_SECONDS:
         gsr_hist = hist_cached[1]
     else:
-        xau_1y = fetch_ohlcv("XAUUSD", interval="1d", range_str="1y", use_cache=True)
-        xag_1y = fetch_ohlcv("XAGUSD", interval="1d", range_str="1y", use_cache=True)
+        xau_1y = _get_spot_history("XAUUSD", interval="1d", range_str="1y")
+        xag_1y = _get_spot_history("XAGUSD", interval="1d", range_str="1y")
         au_map = {b["time"]: b["close"] for b in xau_1y["bars"]}
         ag_map = {b["time"]: b["close"] for b in xag_1y["bars"]}
         common = sorted(set(au_map) & set(ag_map))
@@ -1102,10 +1396,19 @@ def compute_gsr_snapshot() -> dict[str, Any]:
             with _CACHE_LOCK:
                 _GSR_HIST_CACHE = (now, gsr_hist)
 
-    xau_live = fetch_ohlcv("XAUUSD", interval="1h", range_str="5d", use_cache=True)
-    xag_live = fetch_ohlcv("XAGUSD", interval="1h", range_str="5d", use_cache=True)
-    xau_px = float(xau_live["last_price"])
-    xag_px = float(xag_live["last_price"])
+    try:
+        sq_xau = fetch_swissquote_quote("XAUUSD")
+        sq_xag = fetch_swissquote_quote("XAGUSD")
+        xau_px = float(sq_xau["mid"])
+        xag_px = float(sq_xag["mid"])
+        live_source = "swissquote(BBO)"
+    except Exception:
+        xau_live = fetch_spot_composite("XAUUSD", interval="1h", range_str="5d")
+        xag_live = fetch_spot_composite("XAGUSD", interval="1h", range_str="5d")
+        xau_px = float(xau_live["last_price"])
+        xag_px = float(xag_live["last_price"])
+        live_source = xau_live.get("source", "spot")
+
     gsr = (xau_px / xag_px) if xag_px > 0 else 0.0
 
     n_1y = len(gsr_hist)
@@ -1136,6 +1439,7 @@ def compute_gsr_snapshot() -> dict[str, Any]:
         "pct_1y": round(pct_1y, 1),
         "z_1y": round(z_1y, 2),
         "n_1y": n_1y,
+        "source": live_source,
         "updated_at": datetime.now().strftime("%H:%M:%S"),
     }
 
@@ -1150,8 +1454,9 @@ def fetch_ohlcv(
     default_provider: str = "yahoo",
     adjust: str = "qfq",
     use_cache: bool = True,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """统一多源拉取入口，支持 ``provider:SYMBOL``、自动路由与 3 秒内存缓存。"""
+    """统一多源拉取入口；国际现货自动采用「10分钟历史底图 + Swissquote实时跳动」动静分离架构。"""
     if interval not in VALID_INTERVALS:
         raise ValueError(f"不支持的周期 '{interval}'，可选: {sorted(VALID_INTERVALS)}")
 
@@ -1160,7 +1465,12 @@ def fetch_ohlcv(
     cache_key = (prov, sym, interval, resolved_range, adjust)
     now = time.time()
 
-    if use_cache and prov != "csv":
+    if prov == "spot":
+        return fetch_spot_composite(sym, interval=interval, range_str=range_str, force_refresh=force_refresh)
+    if prov == "ratio":
+        return fetch_gsr_ohlcv(interval=interval, range_str=range_str, force_refresh=force_refresh)
+
+    if use_cache and not force_refresh and prov != "csv":
         with _CACHE_LOCK:
             cached = _CACHE.get(cache_key)
             if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
@@ -1173,12 +1483,12 @@ def fetch_ohlcv(
             result = fetch_eastmoney_ohlcv(sym, interval=interval, range_str=range_str, adjust=adjust)
         elif prov == "sina":
             result = fetch_sina_spot_ohlcv(sym, interval=interval, range_str=range_str)
+        elif prov == "twelvedata":
+            result = fetch_twelvedata_ohlcv(sym, interval=interval, range_str=range_str)
         elif prov == "binance":
             result = fetch_binance_ohlcv(sym, interval=interval, range_str=range_str)
         elif prov == "okx":
             result = fetch_okx_ohlcv(sym, interval=interval, range_str=range_str)
-        elif prov == "ratio":
-            result = fetch_gsr_ohlcv(interval=interval, range_str=range_str)
         elif prov == "csv":
             result = load_csv_ohlcv(sym)
         else:
