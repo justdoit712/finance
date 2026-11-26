@@ -273,9 +273,21 @@ class _ChartChannel:
                     chg_pct = round(float(tk.get("change_percentage") or 0.0), 2)
                 except (TypeError, ValueError):
                     continue
-                if cp == self.pair and (1.0 + chg_pct / 100.0) > 0:
+                ts_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                tick_ev: dict[str, Any] | None = None
+                if cp == self.pair:
                     with self._lock:
-                        self._prev_close = last_p / (1.0 + chg_pct / 100.0)
+                        if (1.0 + chg_pct / 100.0) > 0:
+                            self._prev_close = last_p / (1.0 + chg_pct / 100.0)
+                        if self._bars:
+                            last_b = self._bars[-1]
+                            if last_p != last_b["close"]:
+                                last_b["close"] = last_p
+                                if last_p > last_b["high"]:
+                                    last_b["high"] = last_p
+                                if last_p < last_b["low"]:
+                                    last_b["low"] = last_p
+                                tick_ev = self._build_tick_event_locked()
                 self._broadcast(
                     {
                         "type": "quote",
@@ -284,8 +296,11 @@ class _ChartChannel:
                         "resolved_spec": f"gate:{cp}",
                         "last_price": last_p,
                         "change_pct": chg_pct,
+                        "updated_at": ts_now,
                     }
                 )
+                if tick_ev:
+                    self._broadcast(tick_ev)
 
     def _connect_ws(self) -> Any:
         assert websocket is not None

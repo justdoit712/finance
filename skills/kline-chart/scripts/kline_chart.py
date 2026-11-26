@@ -1322,12 +1322,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         const meta = payload.meta;
-        const p = Number(meta.price_precision || state.pricePrecision || inferPrecision(candle.close));
+        const tickMeta = tick.meta || tick;
+        const p = Number(tickMeta.price_precision || meta.price_precision || state.pricePrecision || inferPrecision(candle.close));
+        state.pricePrecision = p;
         meta.last_price = candle.close;
         meta.bar_count = payload.candles.length;
-        if (tick.change != null) meta.change = tick.change;
-        if (tick.change_pct != null) meta.change_pct = tick.change_pct;
-        if (tick.updated_at) meta.updated_at = tick.updated_at;
+        if (tickMeta.change != null) meta.change = tickMeta.change;
+        if (tickMeta.change_pct != null) meta.change_pct = tickMeta.change_pct;
+        if (tickMeta.updated_at) meta.updated_at = tickMeta.updated_at;
 
         const chgVal = Number(meta.change || 0);
         const chgPct = meta.change_pct != null ? Number(meta.change_pct) : 0;
@@ -1349,7 +1351,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         if (!state.lastCrosshairBar) {
           updateLegend(candle, volPoint);
         }
-        setLiveStatus("", `WS 实时推送中 · ${tick.updated_at || meta.updated_at}`);
+        setLiveStatus("", `WS 实时推送中 · ${tickMeta.updated_at || meta.updated_at}`);
       }
     }
 
@@ -1399,8 +1401,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           }
           return;
         }
-        if (msg.type === "quote" && msg.quote) {
-          patchWatchlistQuote(msg.quote);
+        if (msg.type === "quote") {
+          const qObj = msg.quote || msg;
+          patchWatchlistQuote(qObj);
+          if (qObj.updated_at && !state.fallbackTimerId) {
+            setLiveStatus("", `WS 实时推送中 · ${qObj.updated_at}`);
+          }
           return;
         }
         if (msg.type === "tick") {
