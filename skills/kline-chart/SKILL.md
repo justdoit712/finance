@@ -75,14 +75,14 @@ python skills/kline-chart/scripts/kline_chart.py export --csv data/ohlcv.csv -o 
 
 ## 核心交互功能
 
-- **多周期**：`1m`、`5m`、`15m`、`30m`、`1h`、`4h`、`1d`、`1wk`。
+- **多周期**：`5m`、`15m`、`30m`、`1h`、`4h`、`1d`、`1wk`。
 - **主图叠加**：`SMA20`、`SMA60`、布林带 `(20, 2.0)`、成交量柱状图（可一键显隐）。
 - **策略买卖点标记（严格多头交替）**：`none`、`sma_crossover`、`bbands_contrarian`、`rsi_meanrev`、`macd_crossover`。
 - **绿涨红跌 / 红涨绿跌一键切换**：工具栏实时切换配色并同步自选列表涨跌幅颜色。
-- **无闪烁增量刷新**：同一币种自动轮询时保留当前缩放与平移视口，仅对最后一根 K 线调用 `series.update()`。
+- **无闪烁增量刷新**：默认通过 Python 后台接入 Gate.io WebSocket v4（`spot.candlesticks` + `spot.trades` + `spot.tickers`）并经 `/api/stream` (SSE) 向前端浏览器推送毫秒级跳价与指标更新；断线时自动指数退避重连并降级至 `1s` REST 轮询。
 
 ---
 
 ## 依赖说明
 
-仅依赖 Python 3.10+ 标准库与 `requests`（缺少 `requests` 时自动回退 `urllib.request`），桌面窗口自动适配本机 Edge/Chrome App 模式或可选 `pywebview`，**无需 `scipy`、`matplotlib` 或 `plotly`**。
+依赖 Python 3.10+ 标准库、`requests`（缺少 `requests` 时自动回退 `urllib.request`）以及 `websocket-client`（用于实时 WebSocket 行情推送；未安装时自动回退 HTTP 轮询），桌面窗口自动适配本机 Edge/Chrome App 模式或可选 `pywebview`，**无需 `scipy`、`matplotlib` 或 `plotly`**。

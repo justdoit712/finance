@@ -613,6 +613,7 @@ def fetch_quote(
 def fetch_quotes_batch(
     items: list[dict[str, str] | str],
     default_provider: str = "gate",
+    use_cache: bool = True,
 ) -> list[dict[str, Any]]:
     """通过单次全量缓存拉取自选列表 Gate.io 实时报价，避免并发多次握手。"""
     normalized: list[tuple[str, str]] = []
@@ -631,7 +632,7 @@ def fetch_quotes_batch(
 
     if len(normalized) > 1:
         try:
-            all_tk = _get_all_gate_tickers(use_cache=True)
+            all_tk = _get_all_gate_tickers(use_cache=use_cache)
             out: list[dict[str, Any]] = []
             for spec, label in normalized:
                 try:
@@ -653,7 +654,7 @@ def fetch_quotes_batch(
 
     def _worker(idx: int, spec: str, label: str) -> tuple[int, dict[str, Any]]:
         try:
-            q = dict(fetch_quote(spec, default_provider=default_provider))
+            q = dict(fetch_quote(spec, default_provider=default_provider, use_cache=use_cache))
             q["label"] = label
             return idx, q
         except Exception as exc:

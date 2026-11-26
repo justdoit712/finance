@@ -1,5 +1,5 @@
 {
-  "title": "加密货币桌面行情客户端",
+  "title": "客户端",
   "default_symbol": "gate:BTC_USDT",
   "default_provider": "gate",
   "default_interval": "15m",

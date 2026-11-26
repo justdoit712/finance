@@ -13,6 +13,8 @@ desktop_app.py — 加密货币独立桌面行情客户端启动器。
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.wintypes as wt
 import http.client
 import os
 import shutil
@@ -42,6 +44,120 @@ try:
     sys.stdout.reconfigure(encoding="utf-8")
 except (AttributeError, Exception):
     pass
+
+
+_APP_USER_MODEL_ID = "CryptoQuant.KlineClient"
+_WIN_ICON_REFS: list[int] = []
+
+
+def _apply_property_store(pps: ctypes.c_void_p, prop_items: list[tuple[int, str]]) -> None:
+    """写入 Windows Shell IPropertyStore 的 AppUserModel 属性并提交。"""
+    class _GUID(ctypes.Structure):
+        _fields_ = [("Data1", wt.DWORD), ("Data2", wt.WORD), ("Data3", wt.WORD), ("Data4", wt.BYTE * 8)]
+
+    class _PROPERTYKEY(ctypes.Structure):
+        _fields_ = [("fmtid", _GUID), ("pid", wt.DWORD)]
+
+    class _PROPVARIANT(ctypes.Structure):
+        _fields_ = [
+            ("vt", wt.USHORT), ("r1", wt.USHORT), ("r2", wt.USHORT), ("r3", wt.USHORT),
+            ("val", ctypes.c_void_p), ("pad", ctypes.c_void_p),
+        ]
+
+    fmtid_aum = _GUID(0x9F4C2855, 0x9F79, 0x4B39, (wt.BYTE * 8)(0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3))
+    vtbl = ctypes.cast(pps, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    set_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(_PROPERTYKEY), ctypes.POINTER(_PROPVARIANT))(vtbl[6])
+    commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtbl[7])
+    release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtbl[2])
+    try:
+        for pid, text in prop_items:
+            pk = _PROPERTYKEY(fmtid_aum, pid)
+            buf = ctypes.create_unicode_buffer(text)
+            pv = _PROPVARIANT(31, 0, 0, 0, ctypes.cast(buf, ctypes.c_void_p), None)  # VT_LPWSTR = 31
+            set_value(pps, ctypes.byref(pk), ctypes.byref(pv))
+        commit(pps)
+    finally:
+        release(pps)
+
+
+def _make_iid_propertystore() -> ctypes.Structure:
+    class _GUID(ctypes.Structure):
+        _fields_ = [("Data1", wt.DWORD), ("Data2", wt.WORD), ("Data3", wt.WORD), ("Data4", wt.BYTE * 8)]
+    return _GUID(0x886D8EEB, 0x8CF2, 0x4446, (wt.BYTE * 8)(0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99))
+
+
+def _set_shortcut_appid(lnk_path: Path, app_id: str) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        ole32 = ctypes.windll.ole32
+        shell32 = ctypes.windll.shell32
+        ole32.CoInitialize(None)
+        iid = _make_iid_propertystore()
+        pps = ctypes.c_void_p()
+        hr = shell32.SHGetPropertyStoreFromParsingName(str(lnk_path), None, 2, ctypes.byref(iid), ctypes.byref(pps))
+        if hr == 0 and pps:
+            _apply_property_store(pps, [(5, app_id)])
+    except Exception:
+        pass
+
+
+def _apply_window_identity(pid: int, ico_path: Path, relaunch_cmd: str, title: str, app_id: str) -> None:
+    """为独立 App 窗口注入专属图标、任务栏分组 ID 与重启动命令，避免任务栏显示 Edge 默认图标。"""
+    if sys.platform != "win32" or not ico_path.exists():
+        return
+    try:
+        user32 = ctypes.windll.user32
+        shell32 = ctypes.windll.shell32
+        ole32 = ctypes.windll.ole32
+
+        hwnd = 0
+        for _ in range(50):
+            found: list[int] = []
+
+            @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+            def _enum_cb(h: int, _lp: int) -> bool:
+                if user32.IsWindowVisible(h):
+                    win_pid = wt.DWORD()
+                    user32.GetWindowThreadProcessId(h, ctypes.byref(win_pid))
+                    if win_pid.value == pid:
+                        found.append(h)
+                return True
+
+            user32.EnumWindows(_enum_cb, 0)
+            if found:
+                hwnd = found[0]
+                break
+            time.sleep(0.1)
+
+        if not hwnd:
+            return
+
+        h_big = user32.LoadImageW(None, str(ico_path), 1, 48, 48, 0x0010)
+        h_sml = user32.LoadImageW(None, str(ico_path), 1, 16, 16, 0x0010)
+        if h_big:
+            _WIN_ICON_REFS.append(h_big)
+            user32.SendMessageW(hwnd, 0x0080, 1, h_big)
+        if h_sml:
+            _WIN_ICON_REFS.append(h_sml)
+            user32.SendMessageW(hwnd, 0x0080, 0, h_sml)
+
+        ole32.CoInitialize(None)
+        iid = _make_iid_propertystore()
+        pps = ctypes.c_void_p()
+        hr = shell32.SHGetPropertyStoreForWindow(wt.HWND(hwnd), ctypes.byref(iid), ctypes.byref(pps))
+        if hr == 0 and pps:
+            _apply_property_store(
+                pps,
+                [
+                    (5, app_id),
+                    (2, relaunch_cmd),
+                    (3, f"{ico_path},0"),
+                    (4, title),
+                ],
+            )
+    except Exception:
+        pass
 
 
 def find_browser_exe(kind: str) -> str | None:
@@ -186,7 +302,7 @@ def launch_desktop(args: argparse.Namespace) -> None:
 
     app_config = {
         "mode": "live",
-        "title": defaults.get("title", "加密货币桌面行情客户端"),
+        "title": defaults.get("title", "客户端"),
         "symbol": args.symbol.strip(),
         "provider": args.provider,
         "interval": args.interval,
@@ -213,6 +329,7 @@ def launch_desktop(args: argparse.Namespace) -> None:
     url = f"http://127.0.0.1:{port}/"
     srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
     srv_thread.start()
+    threading.Thread(target=providers.warmup, daemon=True).start()
 
     try:
         _wait_for_health(url)
@@ -245,6 +362,13 @@ def launch_desktop(args: argparse.Namespace) -> None:
                     "--disable-extensions",
                 ]
                 proc = subprocess.Popen(cmd)
+                pyw = shutil.which("pythonw") or sys.executable
+                relaunch_cmd = f'"{pyw}" "{Path(__file__).resolve()}"'
+                threading.Thread(
+                    target=_apply_window_identity,
+                    args=(proc.pid, kline_chart.ICON_PATH, relaunch_cmd, app_config["title"], _APP_USER_MODEL_ID),
+                    daemon=True,
+                ).start()
                 proc.wait()
             finally:
                 if proc is not None and proc.poll() is None:
@@ -269,6 +393,40 @@ def launch_desktop(args: argparse.Namespace) -> None:
         print("→ 桌面客户端已退出。")
 
 
+def create_windows_shortcut(dest_dir: Path | None = None, name: str = "客户端") -> Path:
+    """生成指向 pythonw.exe 的 Windows .lnk 快捷方式（带独立 K 线图标，可直接固定到任务栏）。"""
+    repo_root = Path(__file__).resolve().parents[3]
+    target_dir = dest_dir or repo_root
+    target_dir.mkdir(parents=True, exist_ok=True)
+    lnk_path = target_dir / f"{name}.lnk"
+
+    pyw = shutil.which("pythonw") or shutil.which("python") or sys.executable
+    script_rel = r"skills\kline-chart\scripts\desktop_app.py"
+    ico_path = kline_chart.ICON_PATH
+
+    def _ps_esc(s: str) -> str:
+        return s.replace("'", "''")
+
+    ps_script = (
+        "$ws = New-Object -ComObject WScript.Shell; "
+        f"$sc = $ws.CreateShortcut('{_ps_esc(str(lnk_path))}'); "
+        f"$sc.TargetPath = '{_ps_esc(pyw)}'; "
+        f"$sc.Arguments = '\"{script_rel}\"'; "
+        f"$sc.WorkingDirectory = '{_ps_esc(str(repo_root))}'; "
+        "$sc.Description = '客户端'; "
+        + (f"$sc.IconLocation = '{_ps_esc(str(ico_path))},0'; " if ico_path.exists() else "")
+        + "$sc.Save()"
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _set_shortcut_appid(lnk_path, _APP_USER_MODEL_ID)
+    return lnk_path
+
+
 def main() -> None:
     defaults = kline_chart.load_defaults()
     provider_choices = ["auto", *sorted(providers.VALID_PROVIDERS)]
@@ -284,10 +442,17 @@ def main() -> None:
     parser.add_argument("--color-scheme", default=defaults.get("color_scheme", "green_up"), choices=color_choices)
     parser.add_argument("--width", type=int, default=1420)
     parser.add_argument("--height", type=int, default=880)
-    parser.add_argument("--port", type=int, default=0, help="指定端口；默认 0 自动优先使用 8765 或空闲端口")
+    parser.add_argument("--port", type=int, default=0, help="指定端口；默认 0 自动优先使用 8766 或空闲端口")
     parser.add_argument("--backend", default="auto", choices=["auto", "webview", "edge", "chrome"])
     parser.add_argument("--dry-run", action="store_true", help="仅检测窗口后端并打印启动参数，不实际弹窗")
+    parser.add_argument("--create-shortcut", action="store_true", help="生成带图标的 Windows 快捷方式 (.lnk)，可直接固定到任务栏")
+    parser.add_argument("--shortcut-dir", default=None, help="快捷方式生成目录（默认生成在仓库根目录，可指定桌面路径）")
     args = parser.parse_args()
+    if args.create_shortcut:
+        out_dir = Path(args.shortcut_dir) if args.shortcut_dir else None
+        lnk = create_windows_shortcut(out_dir)
+        print(f"✓ 已生成快捷方式: {lnk}")
+        return
     launch_desktop(args)
 
 

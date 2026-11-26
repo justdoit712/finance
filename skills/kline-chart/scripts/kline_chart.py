@@ -22,6 +22,7 @@ import argparse
 import json
 import math
 import os
+import queue
 import sys
 import threading
 import urllib.parse
@@ -37,9 +38,10 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 try:
-    from . import providers
+    from . import providers, ws_stream
 except (ImportError, ValueError):
     import providers
+    import ws_stream
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -450,6 +452,40 @@ def build_kline_payload(
     }
 
 
+def compute_tail_indicators(
+    closes: list[float],
+    time_val: int | str,
+    defaults: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any] | None]:
+    """仅增量计算最后一根 K 线的技术指标点，供 WebSocket/SSE 实时推送使用。"""
+    cfg = (defaults or load_defaults()).get("indicators", {})
+    sma_fast = int(cfg.get("sma_fast", 20))
+    sma_slow = int(cfg.get("sma_slow", 60))
+    bb_period = int(cfg.get("bb_period", 20))
+    bb_std = float(cfg.get("bb_std", 2.0))
+
+    def _pt(val: float | None) -> dict[str, Any] | None:
+        if val is None or not math.isfinite(val):
+            return None
+        return {"time": time_val, "value": round(val, 6)}
+
+    s20 = compute_sma(closes[-sma_fast:], sma_fast)[-1] if len(closes) >= sma_fast else None
+    s60 = compute_sma(closes[-sma_slow:], sma_slow)[-1] if len(closes) >= sma_slow else None
+    if len(closes) >= bb_period:
+        bu_l, bm_l, bl_l = compute_bollinger(closes[-bb_period:], bb_period, bb_std)
+        bu, bm, bl = bu_l[-1], bm_l[-1], bl_l[-1]
+    else:
+        bu = bm = bl = None
+
+    return {
+        "sma20": _pt(s20),
+        "sma60": _pt(s60),
+        "bb_upper": _pt(bu),
+        "bb_mid": _pt(bm),
+        "bb_lower": _pt(bl),
+    }
+
+
 # ── 前端交互页面 HTML 模板 ────────────────────────────────────────────────────
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -637,12 +673,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <option value="rsi_meanrev">信号: RSI均值回归</option>
           <option value="macd_crossover">信号: MACD金叉死叉</option>
         </select>
-        <select id="refresh-select" title="自动刷新间隔">
-          <option value="0">刷新: 暂停</option>
+        <select id="refresh-select" title="实时推送 / 轮询间隔">
+          <option value="live">实时: WS推送</option>
+          <option value="1">刷新: 1s</option>
           <option value="5">刷新: 5s</option>
           <option value="15">刷新: 15s</option>
           <option value="30">刷新: 30s</option>
           <option value="60">刷新: 60s</option>
+          <option value="0">刷新: 暂停</option>
         </select>
         <button id="btn-refresh">立即刷新</button>
         <button id="btn-color-scheme" title="切换绿涨红跌 / 红涨绿跌">绿涨红跌</button>
@@ -699,23 +737,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     const INTERVALS = ["5m", "15m", "1h", "4h", "1d", "1wk"];
     const state = {
       symbol: APP_CONFIG.symbol,
-      provider: APP_CONFIG.provider || "auto",
+      provider: APP_CONFIG.provider || "gate",
       interval: APP_CONFIG.interval,
       range: APP_CONFIG.range,
       strategy: APP_CONFIG.strategy,
-      refreshSec: Number(APP_CONFIG.refresh || 0),
+      wsEnabled: Boolean(APP_CONFIG.ws_enabled),
+      refreshMode: APP_CONFIG.mode === "static"
+        ? "0"
+        : (APP_CONFIG.ws_enabled ? "live" : String(APP_CONFIG.refresh || 1)),
+      refreshSec: Number(APP_CONFIG.refresh || 1),
       colorScheme: APP_CONFIG.color_scheme || "green_up",
       isStatic: APP_CONFIG.mode === "static",
       watchlist: Array.isArray(APP_CONFIG.symbols) ? [...APP_CONFIG.symbols] : [],
       quotesBySpec: {},
       sidebarVisible: APP_CONFIG.mode !== "static",
       pricePrecision: 2,
+      activeCanonicalSymbol: "",
+      lastBarTime: null,
       lastKey: "",
       lastPayload: null,
       payloadCache: new Map(),
       lastCrosshairBar: null,
       lastCrosshairVol: null,
       timerId: null,
+      fallbackTimerId: null,
+      eventSource: null,
+      streamToken: 0,
+      pendingTick: null,
+      rafScheduled: false,
+      lastRafTime: 0,
       activeRequestId: 0,
       abortCtrl: null,
       quotesLoading: false,
@@ -821,10 +871,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById("wl-count").textContent = String(state.watchlist.length);
       box.innerHTML = "";
       state.watchlist.forEach((item, idx) => {
-        const q = state.quotesBySpec[item.symbol] || state.quotesBySpec[item.symbol.toUpperCase()];
+        const pairGuess = item.symbol.replace(/^gate:/i, "").toUpperCase();
+        const q = state.quotesBySpec[item.symbol]
+          || state.quotesBySpec[item.symbol.toUpperCase()]
+          || state.quotesBySpec[pairGuess];
         const isActive = item.symbol.toUpperCase() === state.symbol.toUpperCase();
         const row = document.createElement("div");
         row.className = "wl-item" + (isActive ? " active" : "");
+        row.dataset.spec = item.symbol.toUpperCase();
+        row.dataset.pair = (q && q.symbol) ? String(q.symbol).toUpperCase() : pairGuess;
 
         const provText = (q && q.provider) ? q.provider : "gate";
         const priceStr = (q && q.last_price != null) ? fmtNum(q.last_price) : "--";
@@ -895,21 +950,61 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       } catch (_) {}
     }
 
-    async function fetchWatchlistQuotes() {
+    function patchWatchlistQuote(q) {
+      if (!q || q.error) return;
+      const pair = String(q.symbol || "").toUpperCase();
+      if (q.symbol_spec) {
+        state.quotesBySpec[q.symbol_spec] = q;
+        state.quotesBySpec[q.symbol_spec.toUpperCase()] = q;
+      }
+      if (q.resolved_spec) {
+        state.quotesBySpec[q.resolved_spec] = q;
+        state.quotesBySpec[q.resolved_spec.toUpperCase()] = q;
+      }
+      if (pair) state.quotesBySpec[pair] = q;
+
+      const box = document.getElementById("watchlist-items");
+      if (!box) return;
+      const rows = box.querySelectorAll(".wl-item");
+      rows.forEach((row) => {
+        const rowPair = (row.dataset.pair || "").toUpperCase();
+        const rowSpec = (row.dataset.spec || "").toUpperCase();
+        if ((pair && rowPair === pair) || (q.resolved_spec && rowSpec === q.resolved_spec.toUpperCase())) {
+          const pEl = row.querySelector(".wl-price");
+          if (pEl && q.last_price != null) pEl.textContent = fmtNum(q.last_price);
+          const cEl = row.querySelector(".wl-chg");
+          if (cEl && q.change_pct != null) {
+            const chgVal = Number(q.change_pct);
+            cEl.className = "wl-chg " + (chgVal >= 0 ? "up" : "down");
+            cEl.textContent = `${chgVal >= 0 ? "+" : ""}${chgVal.toFixed(2)}%`;
+          }
+        }
+      });
+    }
+
+    async function fetchWatchlistQuotes(useNocache) {
       if (state.isStatic || state.quotesLoading || !state.watchlist.length) return;
       state.quotesLoading = true;
       try {
         const syms = state.watchlist.map((it) => it.symbol).join(",");
-        const resp = await fetch(`/api/quotes?symbols=${encodeURIComponent(syms)}`);
+        const nocacheFlag = useNocache || state.refreshMode === "1" || Boolean(state.fallbackTimerId);
+        const qUrl = `/api/quotes?symbols=${encodeURIComponent(syms)}${nocacheFlag ? "&nocache=1" : ""}`;
+        const resp = await fetch(qUrl);
         const data = await resp.json();
         if (resp.ok && Array.isArray(data.quotes)) {
+          let rebuilt = false;
           data.quotes.forEach((q) => {
-            if (q && q.symbol_spec && !q.error) {
-              state.quotesBySpec[q.symbol_spec] = q;
-              state.quotesBySpec[q.symbol_spec.toUpperCase()] = q;
+            if (q && !q.error) {
+              if (q.symbol_spec) {
+                state.quotesBySpec[q.symbol_spec] = q;
+                state.quotesBySpec[q.symbol_spec.toUpperCase()] = q;
+              }
+              if (q.resolved_spec) state.quotesBySpec[q.resolved_spec.toUpperCase()] = q;
+              if (q.symbol) state.quotesBySpec[String(q.symbol).toUpperCase()] = q;
+              rebuilt = true;
             }
           });
-          renderWatchlist();
+          if (rebuilt) renderWatchlist();
         }
       } catch (_) {
       } finally {
@@ -976,8 +1071,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById("range-select").disabled = state.isStatic;
       document.getElementById("strategy-select").value = state.strategy;
       document.getElementById("strategy-select").disabled = state.isStatic;
-      document.getElementById("refresh-select").value = String(state.refreshSec);
-      document.getElementById("refresh-select").disabled = state.isStatic;
+      const refreshSel = document.getElementById("refresh-select");
+      if (refreshSel) {
+        const liveOpt = refreshSel.querySelector('option[value="live"]');
+        if (liveOpt) liveOpt.disabled = !state.wsEnabled;
+        if (!state.wsEnabled && state.refreshMode === "live") {
+          state.refreshMode = String(state.refreshSec > 0 ? state.refreshSec : 1);
+        }
+        refreshSel.value = state.refreshMode;
+        refreshSel.disabled = state.isStatic;
+      }
       document.getElementById("custom-symbol").disabled = state.isStatic;
       document.getElementById("btn-load-symbol").disabled = state.isStatic;
       document.getElementById("btn-refresh").disabled = state.isStatic;
@@ -1110,12 +1213,207 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       state.lastKey = key;
       state.lastPayload = payload;
+      state.activeCanonicalSymbol = String(meta.symbol || "").toUpperCase();
+      state.lastBarTime = newCandles.length ? newCandles[newCandles.length - 1].time : null;
       updateLegend(newCandles[newCandles.length - 1], volColored[volColored.length - 1]);
       applyVisibility();
 
-      if (state.isStatic) setLiveStatus("static", `静态快照 (${meta.updated_at})`);
-      else if (state.refreshSec > 0) setLiveStatus("", `实时轮询中 · 每 ${state.refreshSec}s · ${meta.updated_at}`);
-      else setLiveStatus("paused", `已暂停自动刷新 · ${meta.updated_at}`);
+      if (state.isStatic) {
+        setLiveStatus("static", `静态快照 (${meta.updated_at})`);
+      } else if (state.refreshMode === "live" && state.wsEnabled) {
+        if (state.fallbackTimerId) {
+          setLiveStatus("loading", `WS 重连中 · 1s 轮询兜底 (${meta.updated_at})`);
+        } else if (state.eventSource && state.eventSource.readyState === 1) {
+          setLiveStatus("", `WS 实时推送中 · ${meta.updated_at}`);
+        } else {
+          setLiveStatus("loading", `接入实时流中 · ${meta.updated_at}`);
+        }
+      } else {
+        const sec = Number(state.refreshMode);
+        if (sec > 0) setLiveStatus("", `实时轮询中 · 每 ${sec}s · ${meta.updated_at}`);
+        else setLiveStatus("paused", `已暂停自动刷新 · ${meta.updated_at}`);
+      }
+    }
+
+    function stopFallbackPolling() {
+      if (state.fallbackTimerId) {
+        clearInterval(state.fallbackTimerId);
+        state.fallbackTimerId = null;
+      }
+    }
+
+    function startFallbackPolling() {
+      if (state.isStatic || state.fallbackTimerId || state.refreshMode !== "live") return;
+      state.fallbackTimerId = setInterval(() => {
+        fetchAndRender(true);
+        fetchWatchlistQuotes(true);
+      }, 1000);
+    }
+
+    function closeStream() {
+      state.streamToken += 1;
+      if (state.eventSource) {
+        try { state.eventSource.close(); } catch (_) {}
+        state.eventSource = null;
+      }
+      state.pendingTick = null;
+      state.rafScheduled = false;
+      stopFallbackPolling();
+    }
+
+    function syncSeriesPoint(arr, pt) {
+      if (!Array.isArray(arr) || !pt || pt.time == null) return;
+      if (arr.length && arr[arr.length - 1].time === pt.time) {
+        arr[arr.length - 1] = pt;
+      } else if (!arr.length || pt.time > arr[arr.length - 1].time) {
+        arr.push(pt);
+      }
+    }
+
+    function flushPendingTick() {
+      state.rafScheduled = false;
+      const tick = state.pendingTick;
+      if (!tick || state.isStatic || state.refreshMode !== "live") return;
+      const now = performance.now();
+      if (now - state.lastRafTime < 60) {
+        state.rafScheduled = true;
+        requestAnimationFrame(flushPendingTick);
+        return;
+      }
+      state.pendingTick = null;
+      state.lastRafTime = now;
+
+      if (String(tick.symbol || "").toUpperCase() !== state.activeCanonicalSymbol || tick.interval !== state.interval) {
+        return;
+      }
+      const candle = tick.candle;
+      if (!candle || candle.time == null) return;
+      if (state.lastBarTime != null && candle.time < state.lastBarTime) return;
+      state.lastBarTime = candle.time;
+
+      const cols = getColors();
+      const volRaw = tick.volume || { time: candle.time, value: 0 };
+      const volPoint = {
+        time: candle.time,
+        value: Number(volRaw.value || 0),
+        color: candle.close >= candle.open ? cols.upVol : cols.downVol,
+      };
+
+      candleSeries.update(candle);
+      volumeSeries.update(volPoint);
+
+      const ind = tick.indicators || {};
+      if (ind.sma20) sma20Series.update(ind.sma20);
+      if (ind.sma60) sma60Series.update(ind.sma60);
+      if (ind.bb_upper) bbUpperSeries.update(ind.bb_upper);
+      if (ind.bb_mid) bbMidSeries.update(ind.bb_mid);
+      if (ind.bb_lower) bbLowerSeries.update(ind.bb_lower);
+
+      const payload = state.lastPayload;
+      if (payload && payload.meta) {
+        syncSeriesPoint(payload.candles, candle);
+        syncSeriesPoint(payload.volume, volPoint);
+        if (payload.indicators) {
+          if (ind.sma20) syncSeriesPoint(payload.indicators.sma20, ind.sma20);
+          if (ind.sma60) syncSeriesPoint(payload.indicators.sma60, ind.sma60);
+          if (ind.bb_upper) syncSeriesPoint(payload.indicators.bb_upper, ind.bb_upper);
+          if (ind.bb_mid) syncSeriesPoint(payload.indicators.bb_mid, ind.bb_mid);
+          if (ind.bb_lower) syncSeriesPoint(payload.indicators.bb_lower, ind.bb_lower);
+        }
+
+        const meta = payload.meta;
+        const p = Number(meta.price_precision || state.pricePrecision || inferPrecision(candle.close));
+        meta.last_price = candle.close;
+        meta.bar_count = payload.candles.length;
+        if (tick.change != null) meta.change = tick.change;
+        if (tick.change_pct != null) meta.change_pct = tick.change_pct;
+        if (tick.updated_at) meta.updated_at = tick.updated_at;
+
+        const chgVal = Number(meta.change || 0);
+        const chgPct = meta.change_pct != null ? Number(meta.change_pct) : 0;
+        const upDown = chgVal >= 0 ? "up" : "down";
+        const sign = chgVal >= 0 ? "+" : "";
+        const priceEl = document.getElementById("hdr-price");
+        const chgEl = document.getElementById("hdr-change");
+        priceEl.textContent = `${fmtNum(candle.close, p)} ${meta.currency || ""}`.trim();
+        priceEl.className = `price-big ${upDown}`;
+        chgEl.textContent = `${sign}${fmtNum(chgVal, p)} (${sign}${chgPct}%)`;
+        chgEl.className = upDown;
+
+        const hiLoStr = (meta.high_24h != null && meta.low_24h != null)
+          ? ` | 24h高低: ${fmtNum(meta.high_24h, p)} / ${fmtNum(meta.low_24h, p)}`
+          : "";
+        document.getElementById("meta-summary").textContent =
+          `K线: ${meta.bar_count} 根 | 信号: ${payload.markers.length} 次${hiLoStr} | 数据源: ${meta.source} | 更新于: ${meta.updated_at}`;
+
+        if (!state.lastCrosshairBar) {
+          updateLegend(candle, volPoint);
+        }
+        setLiveStatus("", `WS 实时推送中 · ${tick.updated_at || meta.updated_at}`);
+      }
+    }
+
+    function scheduleTickFlush(tick) {
+      state.pendingTick = tick;
+      if (!state.rafScheduled) {
+        state.rafScheduled = true;
+        requestAnimationFrame(flushPendingTick);
+      }
+    }
+
+    function connectStream() {
+      if (state.isStatic || state.refreshMode !== "live" || !state.wsEnabled) return;
+      closeStream();
+      const token = state.streamToken;
+      const wlSyms = state.watchlist.map((it) => it.symbol).filter(Boolean).join(",");
+      const qs = new URLSearchParams({
+        symbol: state.symbol,
+        provider: state.provider,
+        interval: state.interval,
+        range: state.range,
+        watchlist: wlSyms,
+      });
+      setLiveStatus("loading", "正在接入 Gate.io WS...");
+      const es = new EventSource(`/api/stream?${qs.toString()}`);
+      state.eventSource = es;
+
+      es.onmessage = (evt) => {
+        if (token !== state.streamToken || state.refreshMode !== "live") return;
+        let msg;
+        try {
+          msg = JSON.parse(evt.data);
+        } catch (_) {
+          return;
+        }
+        if (!msg || !msg.type) return;
+        if (msg.type === "status") {
+          if (msg.status === "connected") {
+            stopFallbackPolling();
+            const ts = state.lastPayload && state.lastPayload.meta ? state.lastPayload.meta.updated_at : "";
+            setLiveStatus("", ts ? `WS 实时推送中 · ${ts}` : "WS 实时推送中");
+          } else if (msg.status === "connecting") {
+            setLiveStatus("loading", "正在接入 Gate.io WS...");
+          } else if (msg.status === "reconnecting" || msg.status === "error") {
+            setLiveStatus("loading", "WS 重连中 · 1s 轮询兜底");
+            startFallbackPolling();
+          }
+          return;
+        }
+        if (msg.type === "quote" && msg.quote) {
+          patchWatchlistQuote(msg.quote);
+          return;
+        }
+        if (msg.type === "tick") {
+          stopFallbackPolling();
+          scheduleTickFlush(msg);
+        }
+      };
+
+      es.onerror = () => {
+        if (token !== state.streamToken || state.refreshMode !== "live") return;
+        setLiveStatus("loading", "实时流重连中 · 1s 轮询兜底");
+        startFallbackPolling();
+      };
     }
 
     function makeCacheKey(sym, iv, rng, strat) {
@@ -1163,8 +1461,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function fetchAndRender(isTimerRefresh) {
       if (state.isStatic) return;
       if (isTimerRefresh && state.abortCtrl) return;
-      if (!isTimerRefresh && state.abortCtrl) {
-        state.abortCtrl.abort();
+      if (!isTimerRefresh) {
+        closeStream();
+        if (state.abortCtrl) state.abortCtrl.abort();
       }
       const ctrl = new AbortController();
       state.abortCtrl = ctrl;
@@ -1200,12 +1499,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           range: reqRange,
           strategy: reqStrategy,
         });
+        if (isTimerRefresh && (state.refreshMode === "1" || state.fallbackTimerId)) {
+          qs.set("nocache", "1");
+        }
         const resp = await fetch(`/api/kline?${qs.toString()}`, { signal: ctrl.signal });
         const data = await resp.json();
         if (reqId !== state.activeRequestId) return;
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
         storePayloadCache(reqSymbol, reqInterval, reqRange, reqStrategy, data);
         applyPayload(data, isTimerRefresh || Boolean(cached));
+        if (!isTimerRefresh && state.refreshMode === "live" && state.wsEnabled) {
+          connectStream();
+        }
       } catch (err) {
         if (err && err.name === "AbortError") return;
         if (reqId !== state.activeRequestId) return;
@@ -1228,15 +1533,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     function resetTimer() {
       if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
-      if (!state.isStatic && state.refreshSec > 0) {
+      stopFallbackPolling();
+      if (state.isStatic) return;
+      if (state.refreshMode === "live" && state.wsEnabled) {
+        if (state.lastPayload) connectStream();
+        return;
+      }
+      closeStream();
+      const sec = Number(state.refreshMode);
+      if (sec > 0) {
         state.timerId = setInterval(() => {
           fetchAndRender(true);
-          fetchWatchlistQuotes();
-        }, state.refreshSec * 1000);
+          fetchWatchlistQuotes(sec === 1);
+        }, sec * 1000);
       }
     }
 
-    document.getElementById("wl-refresh-btn").onclick = () => fetchWatchlistQuotes();
+    document.getElementById("wl-refresh-btn").onclick = () => fetchWatchlistQuotes(true);
     document.getElementById("wl-add-btn").onclick = () => {
       addSymbolToWatchlist(document.getElementById("wl-add-input").value);
     };
@@ -1259,16 +1572,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     document.getElementById("range-select").onchange = (e) => { state.range = e.target.value; fetchAndRender(false); };
     document.getElementById("strategy-select").onchange = (e) => { state.strategy = e.target.value; fetchAndRender(false); };
     document.getElementById("refresh-select").onchange = (e) => {
-      state.refreshSec = Number(e.target.value);
+      state.refreshMode = e.target.value;
+      if (state.refreshMode !== "live") {
+        state.refreshSec = Number(state.refreshMode);
+      }
       resetTimer();
-      if (state.lastPayload) {
-        if (state.refreshSec > 0) setLiveStatus("", `实时轮询中 · 每 ${state.refreshSec}s · ${state.lastPayload.meta.updated_at}`);
+      if (state.lastPayload && state.refreshMode !== "live") {
+        const sec = Number(state.refreshMode);
+        if (sec > 0) setLiveStatus("", `实时轮询中 · 每 ${sec}s · ${state.lastPayload.meta.updated_at}`);
         else setLiveStatus("paused", `已暂停自动刷新 · ${state.lastPayload.meta.updated_at}`);
       }
     };
     document.getElementById("btn-refresh").onclick = () => {
       fetchAndRender(true);
-      fetchWatchlistQuotes();
+      fetchWatchlistQuotes(true);
     };
     document.getElementById("btn-fit").onclick = () => chart.timeScale().fitContent();
     document.getElementById("btn-color-scheme").onclick = () => {
@@ -1358,6 +1675,7 @@ def make_handler(
             if path == "/":
                 live_cfg = dict(app_config)
                 live_cfg["symbols"] = load_watchlist(defaults)
+                live_cfg["ws_enabled"] = ws_stream.HAS_WEBSOCKET
                 html = render_html(live_cfg, initial_payload=None, inline_lwc=False)
                 self._send_bytes(200, "text/html; charset=utf-8", html.encode("utf-8"))
                 return
@@ -1377,7 +1695,7 @@ def make_handler(
                 return
 
             if path == "/api/health":
-                self._send_json(200, {"ok": True, "mode": app_config.get("mode", "live")})
+                self._send_json(200, {"ok": True, "mode": app_config.get("mode", "live"), "ws_enabled": ws_stream.HAS_WEBSOCKET})
                 return
 
             if path == "/api/watchlist":
@@ -1387,11 +1705,12 @@ def make_handler(
             if path == "/api/quotes":
                 qs = urllib.parse.parse_qs(parsed.query)
                 raw_syms = (qs.get("symbols", [""])[0] or "").strip()
+                nocache = (qs.get("nocache", ["0"])[0] or "0").lower() in ("1", "true", "yes")
                 if raw_syms:
                     items: list[dict[str, str] | str] = [s.strip() for s in raw_syms.split(",") if s.strip()]
                 else:
                     items = load_watchlist(defaults)
-                quotes = providers.fetch_quotes_batch(items, default_provider=default_provider)
+                quotes = providers.fetch_quotes_batch(items, default_provider=default_provider, use_cache=not nocache)
                 self._send_json(
                     200,
                     {"quotes": quotes, "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
@@ -1405,6 +1724,7 @@ def make_handler(
                 interval = (qs.get("interval", [app_config["interval"]])[0] or app_config["interval"]).strip()
                 range_str = (qs.get("range", [app_config["range"]])[0] or app_config["range"]).strip()
                 strategy = (qs.get("strategy", [app_config["strategy"]])[0] or app_config["strategy"]).strip()
+                nocache = (qs.get("nocache", ["0"])[0] or "0").lower() in ("1", "true", "yes")
 
                 try:
                     raw_data = providers.fetch_ohlcv(
@@ -1413,6 +1733,7 @@ def make_handler(
                         range_str=range_str,
                         provider=provider,
                         default_provider=default_provider,
+                        use_cache=not nocache,
                     )
                     payload = build_kline_payload(raw_data, strategy=strategy, defaults=defaults)
                     self._send_json(200, payload)
@@ -1420,6 +1741,79 @@ def make_handler(
                     self._send_json(400, {"error": str(exc)})
                 except Exception as exc:
                     self._send_json(502, {"error": str(exc)})
+                return
+
+            if path == "/api/stream":
+                if not ws_stream.HAS_WEBSOCKET:
+                    self._send_json(503, {"error": "websocket-client not installed"})
+                    return
+                qs = urllib.parse.parse_qs(parsed.query)
+                symbol = (qs.get("symbol", [app_config["symbol"]])[0] or app_config["symbol"]).strip()
+                provider = (qs.get("provider", [app_config.get("provider", "auto")])[0] or "auto").strip()
+                interval = (qs.get("interval", [app_config["interval"]])[0] or app_config["interval"]).strip()
+                range_str = (qs.get("range", [app_config["range"]])[0] or app_config["range"]).strip()
+                raw_wl = (qs.get("watchlist", [""])[0] or "").strip()
+
+                try:
+                    raw_data = providers.fetch_ohlcv(
+                        symbol_spec=symbol,
+                        interval=interval,
+                        range_str=range_str,
+                        provider=provider,
+                        default_provider=default_provider,
+                        use_cache=True,
+                    )
+                except ValueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                except Exception as exc:
+                    self._send_json(502, {"error": str(exc)})
+                    return
+
+                pair = str(raw_data["symbol"]).upper()
+                wl_items = [s.strip() for s in raw_wl.split(",") if s.strip()] if raw_wl else load_watchlist(defaults)
+                wl_pairs: list[str] = []
+                for it in wl_items:
+                    spec = str(it.get("symbol", "") if isinstance(it, dict) else it).strip()
+                    if not spec:
+                        continue
+                    try:
+                        p_prov, p_sym = providers.parse_symbol(spec, default_provider=default_provider)
+                        if p_prov == "gate" and p_sym not in wl_pairs:
+                            wl_pairs.append(p_sym)
+                    except Exception:
+                        pass
+                if pair not in wl_pairs:
+                    wl_pairs.append(pair)
+
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-transform")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+
+                chan, sid, q = ws_stream.HUB.subscribe(
+                    pair=pair,
+                    interval=interval,
+                    raw_data=raw_data,
+                    watchlist_pairs=wl_pairs,
+                    precision_fn=_infer_price_precision,
+                    tail_ind_fn=lambda closes, tv: compute_tail_indicators(closes, tv, defaults=defaults),
+                )
+                try:
+                    while True:
+                        try:
+                            event = q.get(timeout=15)
+                            line = f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
+                        except queue.Empty:
+                            line = b": keepalive\n\n"
+                        self.wfile.write(line)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                    pass
+                finally:
+                    ws_stream.HUB.unsubscribe(pair, interval, chan, sid)
                 return
 
             self._send_bytes(404, "text/plain; charset=utf-8", b"Not Found")
@@ -1462,16 +1856,18 @@ def cmd_serve(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
         "range": args.range,
         "strategy": args.strategy,
         "refresh": args.refresh,
+        "ws_enabled": ws_stream.HAS_WEBSOCKET,
         "color_scheme": args.color_scheme,
         "symbols": defaults.get("symbols", []),
     }
     handler_cls = make_handler(defaults, app_config)
     server = ThreadingHTTPServer((args.host, args.port), handler_cls)
     url = f"http://{args.host}:{args.port}/"
+    mode_desc = "WS实时推送" if app_config["ws_enabled"] else f"自动刷新={app_config['refresh']}s"
     print(f"→ 交互式 K 线看板已启动: {url}")
     print(
         f"  默认标的={app_config['symbol']} | 周期={app_config['interval']} | "
-        f"自动刷新={app_config['refresh']}s | 策略={app_config['strategy']} | 配色={app_config['color_scheme']}"
+        f"{mode_desc} | 策略={app_config['strategy']} | 配色={app_config['color_scheme']}"
     )
     print("  按 Ctrl+C 停止服务。")
 
