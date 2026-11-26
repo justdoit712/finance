@@ -49,6 +49,7 @@ except (AttributeError, Exception):
 SKILL_DIR = SCRIPT_DIR.parent
 ASSETS_DIR = SKILL_DIR / "assets"
 LWC_JS_PATH = ASSETS_DIR / "lightweight-charts.standalone.production.js"
+ICON_PATH = ASSETS_DIR / "crypto_client.ico"
 DEFAULTS_PATH = ASSETS_DIR / "defaults.json"
 WATCHLIST_PATH = Path.home() / ".crypto_quant_watchlist.json"
 
@@ -457,6 +458,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>__PAGE_TITLE__</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <style>
     :root {
       --bg: #131722;
@@ -582,6 +584,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .dot.paused { background: var(--muted); }
     .dot.error { background: var(--down); }
     .dot.static { background: var(--accent); }
+    .dot.loading { background: var(--accent); animation: kpulse 1s ease-in-out infinite; }
+    @keyframes kpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
     .chart-wrap { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; }
     #chart { width: 100%; height: 100%; }
     .error-banner {
@@ -692,7 +696,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     const APP_CONFIG = __APP_CONFIG_JSON__;
     const INITIAL_PAYLOAD = __INITIAL_PAYLOAD_JSON__;
 
-    const INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d", "1wk"];
+    const INTERVALS = ["5m", "15m", "1h", "4h", "1d", "1wk"];
     const state = {
       symbol: APP_CONFIG.symbol,
       provider: APP_CONFIG.provider || "auto",
@@ -708,6 +712,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       pricePrecision: 2,
       lastKey: "",
       lastPayload: null,
+      payloadCache: new Map(),
       lastCrosshairBar: null,
       lastCrosshairVol: null,
       timerId: null,
@@ -1113,6 +1118,48 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       else setLiveStatus("paused", `已暂停自动刷新 · ${meta.updated_at}`);
     }
 
+    function makeCacheKey(sym, iv, rng, strat) {
+      return `${String(sym || "").trim().toUpperCase()}|${iv}|${rng}|${strat}`;
+    }
+
+    function storePayloadCache(reqSym, iv, rng, strat, payload) {
+      state.payloadCache.set(makeCacheKey(reqSym, iv, rng, strat), payload);
+      if (payload && payload.meta && payload.meta.symbol) {
+        state.payloadCache.set(makeCacheKey(payload.meta.symbol, iv, rng, strat), payload);
+        state.payloadCache.set(makeCacheKey(`gate:${payload.meta.symbol}`, iv, rng, strat), payload);
+      }
+      if (state.payloadCache.size > 60) {
+        const firstKey = state.payloadCache.keys().next().value;
+        if (firstKey) state.payloadCache.delete(firstKey);
+      }
+    }
+
+    async function prefetchWatchlistCharts() {
+      if (state.isStatic || !state.watchlist.length) return;
+      const iv = state.interval;
+      const rng = state.range;
+      const strat = state.strategy;
+      for (const item of state.watchlist) {
+        const sym = item.symbol;
+        if (!sym) continue;
+        const k = makeCacheKey(sym, iv, rng, strat);
+        if (state.payloadCache.has(k)) continue;
+        try {
+          const qs = new URLSearchParams({
+            symbol: sym,
+            provider: "gate",
+            interval: iv,
+            range: rng,
+            strategy: strat,
+          });
+          const resp = await fetch(`/api/kline?${qs.toString()}`);
+          if (!resp.ok) continue;
+          const data = await resp.json();
+          if (data && !data.error) storePayloadCache(sym, iv, rng, strat, data);
+        } catch (_) {}
+      }
+    }
+
     async function fetchAndRender(isTimerRefresh) {
       if (state.isStatic) return;
       if (isTimerRefresh && state.abortCtrl) return;
@@ -1123,20 +1170,42 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       state.abortCtrl = ctrl;
       const reqId = ++state.activeRequestId;
       const reqSymbol = state.symbol;
+      const reqInterval = state.interval;
+      const reqRange = state.range;
+      const reqStrategy = state.strategy;
+      const loadBtn = document.getElementById("btn-load-symbol");
+
+      const cached = !isTimerRefresh
+        ? state.payloadCache.get(makeCacheKey(reqSymbol, reqInterval, reqRange, reqStrategy))
+        : null;
+
+      if (cached) {
+        showError("");
+        applyPayload(cached, false);
+        setLiveStatus("loading", `同步最新 K 线中...`);
+      } else if (!isTimerRefresh) {
+        showError("");
+        setLiveStatus("loading", `正在加载 ${reqSymbol}...`);
+        if (loadBtn) {
+          loadBtn.disabled = true;
+          loadBtn.textContent = "加载中...";
+        }
+      }
 
       try {
         const qs = new URLSearchParams({
           symbol: reqSymbol,
           provider: state.provider,
-          interval: state.interval,
-          range: state.range,
-          strategy: state.strategy,
+          interval: reqInterval,
+          range: reqRange,
+          strategy: reqStrategy,
         });
         const resp = await fetch(`/api/kline?${qs.toString()}`, { signal: ctrl.signal });
         const data = await resp.json();
         if (reqId !== state.activeRequestId) return;
         if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-        applyPayload(data, isTimerRefresh);
+        storePayloadCache(reqSymbol, reqInterval, reqRange, reqStrategy, data);
+        applyPayload(data, isTimerRefresh || Boolean(cached));
       } catch (err) {
         if (err && err.name === "AbortError") return;
         if (reqId !== state.activeRequestId) return;
@@ -1149,6 +1218,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       } finally {
         if (reqId === state.activeRequestId) {
           state.abortCtrl = null;
+          if (loadBtn && !state.isStatic) {
+            loadBtn.disabled = false;
+            loadBtn.textContent = "加载";
+          }
         }
       }
     }
@@ -1211,7 +1284,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     renderWatchlist();
     if (INITIAL_PAYLOAD) applyPayload(INITIAL_PAYLOAD, false);
     else {
-      fetchAndRender(false);
+      fetchAndRender(false).then(() => prefetchWatchlistCharts());
       fetchWatchlistQuotes();
     }
     resetTimer();
@@ -1287,6 +1360,13 @@ def make_handler(
                 live_cfg["symbols"] = load_watchlist(defaults)
                 html = render_html(live_cfg, initial_payload=None, inline_lwc=False)
                 self._send_bytes(200, "text/html; charset=utf-8", html.encode("utf-8"))
+                return
+
+            if path == "/favicon.ico":
+                if not ICON_PATH.exists():
+                    self._send_bytes(404, "text/plain; charset=utf-8", b"Icon not found")
+                    return
+                self._send_bytes(200, "image/x-icon", ICON_PATH.read_bytes())
                 return
 
             if path == "/assets/lightweight-charts.standalone.production.js":

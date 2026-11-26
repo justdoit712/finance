@@ -21,8 +21,10 @@ from typing import Any
 
 try:
     import requests
+    from requests.adapters import HTTPAdapter
 except ImportError:
     requests = None  # type: ignore[assignment]
+    HTTPAdapter = None  # type: ignore[assignment,misc]
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -30,12 +32,11 @@ USER_AGENT = (
 )
 
 VALID_PROVIDERS = {"gate", "csv"}
-VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
-INTRADAY_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h"}
+VALID_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
+INTRADAY_INTERVALS = {"5m", "15m", "30m", "1h", "4h"}
 VALID_RANGES = {"auto", "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
 
 DEFAULT_RANGE_BY_INTERVAL = {
-    "1m": "1d",
     "5m": "5d",
     "15m": "5d",
     "30m": "5d",
@@ -49,7 +50,6 @@ DEFAULT_RANGE_BY_INTERVAL = {
 GATE_BASE_URL = "https://api.gateio.ws/api/v4/spot"
 
 _GATE_INTERVAL_MAP = {
-    "1m": "1m",
     "5m": "5m",
     "15m": "15m",
     "30m": "30m",
@@ -75,7 +75,37 @@ _CRYPTO_LIMIT_MAP = {
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
 _QUOTE_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
-CACHE_TTL_SECONDS = 3.0
+_ALL_TICKERS_LOCK = threading.Lock()
+_ALL_TICKERS_CACHE: tuple[float, dict[str, dict[str, Any]]] | None = None
+_SESSION_LOCK = threading.Lock()
+_SHARED_SESSION: Any = None
+CACHE_TTL_SECONDS = 4.0
+
+
+def _get_session() -> Any:
+    global _SHARED_SESSION
+    if requests is None:
+        return None
+    if _SHARED_SESSION is None:
+        with _SESSION_LOCK:
+            if _SHARED_SESSION is None:
+                sess = requests.Session()
+                sess.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
+                if HTTPAdapter is not None:
+                    sess.mount("https://", HTTPAdapter(pool_connections=8, pool_maxsize=16))
+                _SHARED_SESSION = sess
+    return _SHARED_SESSION
+
+
+def _reset_session() -> None:
+    global _SHARED_SESSION
+    with _SESSION_LOCK:
+        if _SHARED_SESSION is not None:
+            try:
+                _SHARED_SESSION.close()
+            except Exception:
+                pass
+            _SHARED_SESSION = None
 
 
 def _http_get_json(
@@ -83,12 +113,17 @@ def _http_get_json(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     timeout: int = 8,
+    use_session: bool = True,
 ) -> dict[str, Any] | list[Any]:
     hdrs = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if headers:
         hdrs.update(headers)
     if requests is not None:
-        resp = requests.get(url, params=params, headers=hdrs, timeout=timeout)
+        sess = _get_session() if use_session else None
+        if sess is not None:
+            resp = sess.get(url, params=params, headers=headers, timeout=timeout)
+        else:
+            resp = requests.get(url, params=params, headers=hdrs, timeout=timeout)
         resp.raise_for_status()
         return resp.json()
     qs = urllib.parse.urlencode(params or {})
@@ -107,20 +142,55 @@ def _is_http_4xx(exc: Exception) -> bool:
 
 
 def _gate_get_json(path: str, params: dict[str, Any] | None = None, timeout: int = 8) -> dict[str, Any] | list[Any]:
-    """请求 Gate.io 公开 REST 接口（遇瞬时 SSL/网络抖动自动短连接重试，遇 4xx 立即报错）。"""
+    """优先复用 HTTP Keep-Alive 长连接请求 Gate.io；若长连接失效则重建连接重试，遇 4xx 立即报错。"""
     url = f"{GATE_BASE_URL}{path}"
-    attempts = [None, {"Connection": "close"}, {"Connection": "close"}]
+    attempts = [
+        (True, None),
+        (True, None),
+        (False, {"Connection": "close"}),
+    ]
     last_err: Exception | None = None
-    for idx, extra_hdrs in enumerate(attempts):
+    for idx, (use_sess, extra_hdrs) in enumerate(attempts):
         try:
-            return _http_get_json(url, params=params, headers=extra_hdrs, timeout=timeout)
+            return _http_get_json(url, params=params, headers=extra_hdrs, timeout=timeout, use_session=use_sess)
         except Exception as exc:
             last_err = exc
             if _is_http_4xx(exc):
                 raise
+            _reset_session()
             if idx < len(attempts) - 1:
-                time.sleep(0.15)
+                time.sleep(0.1)
     raise RuntimeError(str(last_err))
+
+
+def _get_all_gate_tickers(use_cache: bool = True) -> dict[str, dict[str, Any]]:
+    """一次性拉取并缓存 Gate.io 全市场现货 24h 行情映射，大幅减少批量握手开销。"""
+    global _ALL_TICKERS_CACHE
+    now = time.time()
+    if use_cache and _ALL_TICKERS_CACHE and (now - _ALL_TICKERS_CACHE[0]) < CACHE_TTL_SECONDS:
+        return _ALL_TICKERS_CACHE[1]
+
+    with _ALL_TICKERS_LOCK:
+        now = time.time()
+        if use_cache and _ALL_TICKERS_CACHE and (now - _ALL_TICKERS_CACHE[0]) < CACHE_TTL_SECONDS:
+            return _ALL_TICKERS_CACHE[1]
+        raw = _gate_get_json("/tickers", timeout=8)
+        if not isinstance(raw, list):
+            raise RuntimeError("Gate.io 全量报价返回格式异常")
+        mapping: dict[str, dict[str, Any]] = {}
+        for item in raw:
+            if isinstance(item, dict) and item.get("currency_pair"):
+                mapping[str(item["currency_pair"]).upper()] = item
+        _ALL_TICKERS_CACHE = (time.time(), mapping)
+        return mapping
+
+
+def warmup() -> None:
+    """后台预热 Gate.io HTTPS 长连接与全量行情缓存。"""
+    try:
+        _get_all_gate_tickers(use_cache=False)
+    except Exception:
+        pass
 
 
 def resolve_range(interval: str, range_str: str | None) -> str:
@@ -235,28 +305,27 @@ def fetch_gate_ohlcv(symbol: str, interval: str = "1h", range_str: str | None = 
     resolved_range = resolve_range(interval, range_str)
     limit = min(_CRYPTO_LIMIT_MAP.get(resolved_range, 300), 1000)
 
-    def _fetch_candles() -> Any:
-        return _gate_get_json(
+    try:
+        raw = _gate_get_json(
             "/candlesticks",
             params={"currency_pair": pair, "interval": _GATE_INTERVAL_MAP[interval], "limit": limit},
         )
+    except Exception as exc:
+        if _is_http_4xx(exc):
+            raise ValueError(f"Gate.io 现货未找到交易对 {pair}") from exc
+        raise RuntimeError(f"请求 Gate.io 失败 ({pair}): {exc}") from exc
 
-    def _fetch_ticker_best_effort() -> Any:
+    tk_raw: Any = None
+    now_t = time.time()
+    if _ALL_TICKERS_CACHE and (now_t - _ALL_TICKERS_CACHE[0]) < 30.0:
+        hit = _ALL_TICKERS_CACHE[1].get(pair)
+        if hit:
+            tk_raw = [hit]
+    if tk_raw is None:
         try:
-            return _http_get_json(f"{GATE_BASE_URL}/tickers", params={"currency_pair": pair}, timeout=5)
+            tk_raw = _http_get_json(f"{GATE_BASE_URL}/tickers", params={"currency_pair": pair}, timeout=4)
         except Exception:
-            return None
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_candles = pool.submit(_fetch_candles)
-        fut_ticker = pool.submit(_fetch_ticker_best_effort)
-        try:
-            raw = fut_candles.result()
-        except Exception as exc:
-            if _is_http_4xx(exc):
-                raise ValueError(f"Gate.io 现货未找到交易对 {pair}") from exc
-            raise RuntimeError(f"请求 Gate.io 失败 ({pair}): {exc}") from exc
-        tk_raw = fut_ticker.result()
+            tk_raw = None
 
     if not isinstance(raw, list):
         raise RuntimeError(f"Gate.io 返回格式异常 ({pair}): {raw}")
@@ -483,6 +552,22 @@ def fetch_ohlcv(
 
 # ── 轻量级实时报价与自选批量接口 ──────────────────────────────────────────────
 
+def _ticker_to_quote(tk: dict[str, Any], pair: str, spec: str) -> dict[str, Any]:
+    return {
+        "provider": "gate",
+        "symbol": pair,
+        "display_name": pair.replace("_", "/"),
+        "currency": pair.split("_")[-1] if "_" in pair else "USDT",
+        "last_price": float(tk["last"]),
+        "change_pct": round(float(tk.get("change_percentage") or 0.0), 2),
+        "high_24h": float(tk["high_24h"]) if _is_finite(tk.get("high_24h")) else None,
+        "low_24h": float(tk["low_24h"]) if _is_finite(tk.get("low_24h")) else None,
+        "quote_volume_24h": float(tk["quote_volume"]) if _is_finite(tk.get("quote_volume")) else None,
+        "symbol_spec": spec,
+        "resolved_spec": f"gate:{pair}",
+    }
+
+
 def fetch_quote(
     symbol_spec: str,
     provider: str | None = None,
@@ -502,6 +587,10 @@ def fetch_quote(
             cached = _QUOTE_CACHE.get(cache_key)
             if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
                 return cached[1]
+        if _ALL_TICKERS_CACHE and (now - _ALL_TICKERS_CACHE[0]) < CACHE_TTL_SECONDS:
+            hit = _ALL_TICKERS_CACHE[1].get(pair)
+            if hit and _is_finite(hit.get("last")):
+                return _ticker_to_quote(hit, pair, spec)
 
     try:
         raw = _gate_get_json("/tickers", params={"currency_pair": pair}, timeout=6)
@@ -513,20 +602,7 @@ def fetch_quote(
     if not isinstance(raw, list) or not raw or not _is_finite(raw[0].get("last")):
         raise RuntimeError(f"Gate.io 未返回 {pair} 报价")
 
-    tk = raw[0]
-    q = {
-        "provider": "gate",
-        "symbol": pair,
-        "display_name": pair.replace("_", "/"),
-        "currency": pair.split("_")[-1] if "_" in pair else "USDT",
-        "last_price": float(tk["last"]),
-        "change_pct": round(float(tk.get("change_percentage") or 0.0), 2),
-        "high_24h": float(tk["high_24h"]) if _is_finite(tk.get("high_24h")) else None,
-        "low_24h": float(tk["low_24h"]) if _is_finite(tk.get("low_24h")) else None,
-        "quote_volume_24h": float(tk["quote_volume"]) if _is_finite(tk.get("quote_volume")) else None,
-        "symbol_spec": spec,
-        "resolved_spec": f"gate:{pair}",
-    }
+    q = _ticker_to_quote(raw[0], pair, spec)
 
     if use_cache:
         with _CACHE_LOCK:
@@ -538,7 +614,7 @@ def fetch_quotes_batch(
     items: list[dict[str, str] | str],
     default_provider: str = "gate",
 ) -> list[dict[str, Any]]:
-    """并发批量拉取自选列表 Gate.io 实时报价，保持输入顺序。"""
+    """通过单次全量缓存拉取自选列表 Gate.io 实时报价，避免并发多次握手。"""
     normalized: list[tuple[str, str]] = []
     for item in items:
         if isinstance(item, dict):
@@ -552,6 +628,26 @@ def fetch_quotes_batch(
 
     if not normalized:
         return []
+
+    if len(normalized) > 1:
+        try:
+            all_tk = _get_all_gate_tickers(use_cache=True)
+            out: list[dict[str, Any]] = []
+            for spec, label in normalized:
+                try:
+                    _, pair = parse_symbol(spec, default_provider=default_provider)
+                    tk = all_tk.get(pair)
+                    if tk and _is_finite(tk.get("last")):
+                        q = _ticker_to_quote(tk, pair, spec)
+                        q["label"] = label
+                        out.append(q)
+                    else:
+                        out.append({"symbol_spec": spec, "label": label, "error": f"Gate.io 现货未找到交易对 {pair}"})
+                except Exception as exc:
+                    out.append({"symbol_spec": spec, "label": label, "error": str(exc)})
+            return out
+        except Exception:
+            pass
 
     results: list[dict[str, Any] | None] = [None] * len(normalized)
 
@@ -567,7 +663,7 @@ def fetch_quotes_batch(
                 "error": str(exc),
             }
 
-    with ThreadPoolExecutor(max_workers=min(8, len(normalized))) as pool:
+    with ThreadPoolExecutor(max_workers=min(4, len(normalized))) as pool:
         futures = [pool.submit(_worker, i, spec, label) for i, (spec, label) in enumerate(normalized)]
         for fut in as_completed(futures):
             idx, data = fut.result()
