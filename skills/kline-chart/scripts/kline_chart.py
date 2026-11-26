@@ -493,9 +493,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="group">
         <select id="provider-select" title="数据源适配器">
           <option value="auto">源: 自动推断</option>
+          <option value="gate">Gate 现货指数 (XAU/XAG)</option>
+          <option value="bitget">Bitget 永续参考</option>
           <option value="yahoo">Yahoo (COMEX期货/ETF)</option>
+          <option value="sina">新浪现货 (XAU/XAG日线)</option>
           <option value="eastmoney">东方财富 (COMEX/现货)</option>
-          <option value="sina">新浪现货 (XAU/XAG)</option>
           <option value="twelvedata">Twelve Data (需Key)</option>
           <option value="binance">Binance 24h锚定金</option>
           <option value="okx">OKX 24h锚定金</option>

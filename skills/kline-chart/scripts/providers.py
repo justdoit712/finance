@@ -36,7 +36,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-VALID_PROVIDERS = {"yahoo", "eastmoney", "sina", "twelvedata", "binance", "okx", "ratio", "spot", "csv"}
+VALID_PROVIDERS = {"yahoo", "eastmoney", "sina", "gate", "bitget", "twelvedata", "binance", "okx", "ratio", "spot", "csv"}
 VALID_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
 INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h", "4h"}
 VALID_RANGES = {"auto", "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
@@ -67,6 +67,8 @@ EASTMONEY_URLS = [
     "https://push2his.eastmoney.com/api/qt/stock/kline/get",
 ]
 SINA_FUTURES_BASE = "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var=/GlobalFuturesService"
+GATE_FUTURES_CANDLES_URL = "https://api.gateio.ws/api/v4/futures/usdt/candlesticks"
+BITGET_MIX_CANDLES_URL = "https://api.bitget.com/api/v2/mix/market/candles"
 SWISSQUOTE_BBO_URL = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument"
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 OKX_URL = "https://www.okx.com/api/v5/market/candles"
@@ -461,11 +463,12 @@ def _to_eastmoney_secid(symbol: str) -> tuple[str, str, str, str]:
 def _try_spot_or_comex_fallback(
     secid: str, interval: str, range_str: str | None
 ) -> dict[str, Any] | None:
-    """当东方财富限流或断连时，自动切换至新浪国际现货或 Yahoo COMEX 连续期货。"""
-    if secid == "122.XAU":
-        return fetch_sina_spot_ohlcv("XAUUSD", interval=interval, range_str=range_str)
-    if secid == "122.XAG":
-        return fetch_sina_spot_ohlcv("XAGUSD", interval=interval, range_str=range_str)
+    """当东方财富限流或断连时，自动切换至 Gate 现货指数 / 新浪日线 / Yahoo COMEX 连续。"""
+    if secid in ("122.XAU", "122.XAG"):
+        spot_sym = "XAUUSD" if secid == "122.XAU" else "XAGUSD"
+        if interval in ("1d", "1wk", "1mo"):
+            return fetch_sina_spot_ohlcv(spot_sym, interval=interval, range_str=range_str)
+        return fetch_gate_spot_ohlcv(spot_sym, interval=interval, range_str=range_str)
     if secid == "101.GC00Y" and interval != "4h":
         return fetch_yahoo_ohlcv("GC=F", interval=interval, range_str=range_str)
     if secid == "101.SI00Y" and interval != "4h":
@@ -801,6 +804,285 @@ _SPOT_BUCKET_SEC = {
     "4h": 14400,
 }
 
+_INTERVAL_MINUTES = {
+    "1m": 1,
+    "2m": 2,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+    "1wk": 10080,
+    "1mo": 43200,
+}
+
+_RANGE_DAYS = {
+    "1d": 1,
+    "5d": 5,
+    "1mo": 30,
+    "3mo": 90,
+    "6mo": 180,
+    "1y": 365,
+    "2y": 730,
+    "5y": 1825,
+    "10y": 3650,
+    "ytd": 365,
+    "max": 3650,
+}
+
+_GATE_INTERVAL_MAP = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+    "1wk": "1w",
+}
+
+_BITGET_INTERVAL_MAP = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1H",
+    "4h": "4H",
+    "1d": "1D",
+    "1wk": "1W",
+}
+
+
+def _calc_bar_limit(interval: str, resolved_range: str, max_limit: int = 1000) -> int:
+    days = _RANGE_DAYS.get(resolved_range, 30)
+    mins = _INTERVAL_MINUTES.get(interval, 60)
+    est = int((days * 1440) / max(mins, 1))
+    floor_n = 120 if interval in INTRADAY_INTERVALS else 60
+    return min(max(est, floor_n), max_limit)
+
+
+def _resample_intraday_bars(bars: list[dict[str, Any]], bucket_sec: int) -> list[dict[str, Any]]:
+    buckets: dict[int, dict[str, Any]] = {}
+    for b in bars:
+        ts = int(b["time"])
+        b_ts = (ts // bucket_sec) * bucket_sec
+        cur = buckets.get(b_ts)
+        if cur is None:
+            buckets[b_ts] = {
+                "ts": b_ts,
+                "open": b["open"],
+                "high": b["high"],
+                "low": b["low"],
+                "close": b["close"],
+                "volume": b.get("volume", 0.0),
+            }
+        else:
+            cur["high"] = max(float(cur["high"]), float(b["high"]))
+            cur["low"] = min(float(cur["low"]), float(b["low"]))
+            cur["close"] = b["close"]
+            cur["volume"] = float(cur["volume"]) + float(b.get("volume", 0.0))
+    return _sanitize_bars(list(buckets.values()), is_intraday=True)
+
+
+def _group_daily_bars(bars: list[dict[str, Any]], interval: str) -> list[dict[str, Any]]:
+    if interval not in ("1wk", "1mo") or not bars:
+        return bars
+    grouped: dict[str, dict[str, Any]] = {}
+    for b in bars:
+        dt = datetime.strptime(str(b["time"]), "%Y-%m-%d")
+        g_key = f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]:02d}" if interval == "1wk" else str(b["time"])[:7]
+        cur = grouped.get(g_key)
+        if cur is None:
+            grouped[g_key] = dict(b)
+        else:
+            cur["time"] = b["time"]
+            cur["high"] = max(cur["high"], b["high"])
+            cur["low"] = min(cur["low"], b["low"])
+            cur["close"] = b["close"]
+            cur["volume"] += b["volume"]
+    return list(grouped.values())
+
+
+def _resolve_spot_code(symbol: str) -> tuple[str, str, str] | None:
+    su = symbol.strip().upper()
+    if su in _SQ_PAIR_MAP:
+        return _SQ_PAIR_MAP[su]
+    if su in ("XAUUSD=X", "SPOT:XAU"):
+        return _SQ_PAIR_MAP["XAUUSD"]
+    if su in ("XAGUSD=X", "SPOT:XAG"):
+        return _SQ_PAIR_MAP["XAGUSD"]
+    return None
+
+
+def fetch_gate_spot_ohlcv(
+    symbol: str,
+    interval: str = "1h",
+    range_str: str | None = "auto",
+    use_index: bool = True,
+) -> dict[str, Any]:
+    """拉取 Gate 贵金属现货指数 / 永续 24h 多周期历史 K 线（支持 XAUUSD / XAGUSD，免 Key）。"""
+    spot_info = _resolve_spot_code(symbol)
+    if spot_info:
+        sq_code, clean_code, display_name = spot_info
+        prefix = "index_" if use_index else ""
+        contract = f"{prefix}{sq_code}_USDT"
+        source_tag = "gate(SPOT-INDEX)" if use_index else "gate(PERP)"
+    else:
+        raw_sym = symbol.strip().upper().replace("-", "_")
+        if not raw_sym.endswith("_USDT") and raw_sym.endswith("USDT"):
+            raw_sym = f"{raw_sym[:-4]}_USDT"
+        contract = raw_sym
+        clean_code = raw_sym
+        display_name = raw_sym
+        source_tag = "gate"
+
+    resolved_range = resolve_range(interval, range_str)
+    fetch_iv = "1m" if interval == "2m" else ("1d" if interval == "1mo" else interval)
+    if fetch_iv not in _GATE_INTERVAL_MAP:
+        raise ValueError(f"Gate 不支持周期 '{interval}'，可选: {sorted(VALID_INTERVALS)}")
+
+    limit = _calc_bar_limit(interval, resolved_range, max_limit=1000)
+    if interval == "2m":
+        limit = min(limit * 2, 1000)
+    elif interval == "1mo":
+        limit = 1000
+
+    rows = _http_get_json(
+        GATE_FUTURES_CANDLES_URL,
+        params={"contract": contract, "interval": _GATE_INTERVAL_MAP[fetch_iv], "limit": limit},
+        timeout=10,
+    )
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError(f"Gate 未返回 {contract} 有效 K 线")
+
+    is_intraday = interval in INTRADAY_INTERVALS
+    raw_bars: list[dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict) or "t" not in r:
+            continue
+        ts_int = int(r["t"])
+        raw_bars.append(
+            {
+                "ts": ts_int,
+                "date_str": datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d"),
+                "open": r.get("o"),
+                "high": r.get("h"),
+                "low": r.get("l"),
+                "close": r.get("c"),
+                "volume": r.get("v", 0),
+            }
+        )
+
+    bars = _sanitize_bars(raw_bars, is_intraday=(fetch_iv in INTRADAY_INTERVALS))
+    if interval == "2m":
+        bars = _resample_intraday_bars(bars, 120)
+    elif interval == "1mo":
+        bars = _group_daily_bars(bars, "1mo")
+
+    if not bars:
+        raise RuntimeError(f"Gate 未解析出 {contract} 有效 K 线")
+
+    return {
+        "provider": "gate",
+        "symbol": clean_code,
+        "display_name": display_name,
+        "currency": "USD",
+        "exchange": "SPOT" if spot_info else "GATE",
+        "interval": interval,
+        "range": range_str or "auto",
+        "resolved_range": resolved_range,
+        "is_intraday": is_intraday,
+        "last_price": bars[-1]["close"],
+        "prev_close": bars[-2]["close"] if len(bars) >= 2 else bars[0]["open"],
+        "bars": bars,
+        "source": source_tag,
+    }
+
+
+def fetch_bitget_spot_ohlcv(
+    symbol: str,
+    interval: str = "1h",
+    range_str: str | None = "auto",
+) -> dict[str, Any]:
+    """拉取 Bitget 贵金属 24h 多周期历史 K 线备援（支持 XAUUSD / XAGUSD，免 Key）。"""
+    spot_info = _resolve_spot_code(symbol)
+    if spot_info:
+        sq_code, clean_code, display_name = spot_info
+        bg_sym = f"{sq_code}USDT"
+    else:
+        bg_sym = symbol.strip().upper().replace("-", "").replace("_", "")
+        clean_code = bg_sym
+        display_name = bg_sym
+
+    resolved_range = resolve_range(interval, range_str)
+    fetch_iv = "1m" if interval == "2m" else ("1d" if interval == "1mo" else interval)
+    if fetch_iv not in _BITGET_INTERVAL_MAP:
+        raise ValueError(f"Bitget 不支持周期 '{interval}'，可选: {sorted(VALID_INTERVALS)}")
+
+    limit = _calc_bar_limit(interval, resolved_range, max_limit=500)
+    if interval == "2m":
+        limit = min(limit * 2, 500)
+    elif interval == "1mo":
+        limit = 500
+
+    raw = _http_get_json(
+        BITGET_MIX_CANDLES_URL,
+        params={
+            "symbol": bg_sym,
+            "productType": "USDT-FUTURES",
+            "granularity": _BITGET_INTERVAL_MAP[fetch_iv],
+            "limit": str(limit),
+        },
+        timeout=10,
+    )
+    if not isinstance(raw, dict) or raw.get("code") != "00000" or not raw.get("data"):
+        msg = raw.get("msg") if isinstance(raw, dict) else str(raw)
+        raise RuntimeError(f"Bitget 返回错误 ({bg_sym}): {msg}")
+
+    is_intraday = interval in INTRADAY_INTERVALS
+    raw_bars: list[dict[str, Any]] = []
+    for r in raw["data"]:
+        if not isinstance(r, list) or len(r) < 6:
+            continue
+        ts_int = int(r[0]) // 1000
+        raw_bars.append(
+            {
+                "ts": ts_int,
+                "date_str": datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d"),
+                "open": r[1],
+                "high": r[2],
+                "low": r[3],
+                "close": r[4],
+                "volume": r[5],
+            }
+        )
+
+    bars = _sanitize_bars(raw_bars, is_intraday=(fetch_iv in INTRADAY_INTERVALS))
+    if interval == "2m":
+        bars = _resample_intraday_bars(bars, 120)
+    elif interval == "1mo":
+        bars = _group_daily_bars(bars, "1mo")
+
+    if not bars:
+        raise RuntimeError(f"Bitget 未解析出 {bg_sym} 有效 K 线")
+
+    return {
+        "provider": "bitget",
+        "symbol": clean_code,
+        "display_name": display_name,
+        "currency": "USD",
+        "exchange": "SPOT" if spot_info else "BITGET",
+        "interval": interval,
+        "range": range_str or "auto",
+        "resolved_range": resolved_range,
+        "is_intraday": is_intraday,
+        "last_price": bars[-1]["close"],
+        "prev_close": bars[-2]["close"] if len(bars) >= 2 else bars[0]["open"],
+        "bars": bars,
+        "source": "bitget(SPOT-INDEX)" if spot_info else "bitget",
+    }
+
 
 def fetch_swissquote_quote(symbol: str) -> dict[str, Any]:
     """拉取瑞士瑞讯银行公开 BBO 实时买一/卖一及中间价（免 Key、极低延迟）。"""
@@ -934,13 +1216,51 @@ def fetch_twelvedata_ohlcv(symbol: str, interval: str = "1h", range_str: str | N
     }
 
 
+def _calibrate_usdt_bars_to_usd(hist: dict[str, Any], clean_code: str) -> dict[str, Any]:
+    """按瑞讯银行实时 USD 中间价做一次性微幅汇率/基差对齐（<=3%），避免 1m/5m 合并时产生人为跳空影线。"""
+    if hist.get("provider") not in ("gate", "bitget", "binance", "okx") or not hist.get("bars"):
+        return hist
+    try:
+        sq = fetch_swissquote_quote(clean_code)
+        sq_mid = float(sq["mid"])
+        hist_last = float(hist["last_price"])
+        if hist_last <= 0 or sq_mid <= 0:
+            return hist
+        factor = sq_mid / hist_last
+        if not (0.97 <= factor <= 1.03):
+            return hist
+    except Exception:
+        return hist
+
+    decimals = 4 if clean_code == "XAGUSD" else 2
+    out = dict(hist)
+    scaled_bars: list[dict[str, Any]] = []
+    for b in hist["bars"]:
+        nb = dict(b)
+        for field in ("open", "high", "low", "close"):
+            nb[field] = round(float(b[field]) * factor, decimals)
+        scaled_bars.append(nb)
+    out["bars"] = scaled_bars
+    out["last_price"] = scaled_bars[-1]["close"]
+    out["prev_close"] = round(float(hist["prev_close"]) * factor, decimals)
+    out["symbol"] = clean_code
+    if clean_code in _SQ_PAIR_MAP:
+        out["display_name"] = _SQ_PAIR_MAP[clean_code][2]
+    return out
+
+
 def _get_spot_history(
     clean_code: str,
     interval: str,
     range_str: str | None,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """低频获取国际现货历史底图并长缓存（默认 10 分钟），避免触发上游限流。"""
+    """低频获取国际现货历史底图并长缓存（默认 10 分钟）。
+
+    路由策略（彻底摆脱东方财富断连与新浪仅今日分时问题）:
+      - 日线/周线/月线: TwelveData(如有Key) -> 新浪全历史伦敦现货日线 -> Gate 现货指数 -> Bitget
+      - 日内分钟/小时线: TwelveData(如有Key) -> Gate 现货指数(1000根) -> Bitget(500根) -> Binance/OKX(黄金) -> 新浪今日分时
+    """
     resolved_range = resolve_range(interval, range_str)
     hkey = (clean_code, interval, resolved_range)
     now = time.time()
@@ -960,17 +1280,32 @@ def _get_spot_history(
         except Exception as exc:
             errors.append(f"twelvedata: {exc}")
 
-    if hist is None:
-        try:
-            hist = fetch_eastmoney_ohlcv(clean_code, interval=interval, range_str=range_str)
-        except Exception as exc:
-            errors.append(f"eastmoney: {exc}")
+    if interval in ("1d", "1wk", "1mo"):
+        candidates: list[tuple[str, Any]] = [
+            ("sina-daily", lambda: fetch_sina_spot_ohlcv(clean_code, interval=interval, range_str=range_str)),
+            ("gate-index", lambda: fetch_gate_spot_ohlcv(clean_code, interval=interval, range_str=range_str)),
+            ("bitget", lambda: fetch_bitget_spot_ohlcv(clean_code, interval=interval, range_str=range_str)),
+        ]
+    else:
+        candidates = [
+            ("gate-index", lambda: fetch_gate_spot_ohlcv(clean_code, interval=interval, range_str=range_str)),
+            ("bitget", lambda: fetch_bitget_spot_ohlcv(clean_code, interval=interval, range_str=range_str)),
+        ]
+        if clean_code == "XAUUSD":
+            if interval in _BN_INTERVAL_MAP:
+                candidates.append(("binance-paxg", lambda: fetch_binance_ohlcv("PAXGUSDT", interval=interval, range_str=range_str)))
+            if interval in _OKX_INTERVAL_MAP:
+                candidates.append(("okx-xaut", lambda: fetch_okx_ohlcv("XAUT-USDT", interval=interval, range_str=range_str)))
+        if interval in _SINA_BUCKET_SEC:
+            candidates.append(("sina-minline", lambda: fetch_sina_spot_ohlcv(clean_code, interval=interval, range_str=range_str)))
 
-    if hist is None:
+    for label, fn in candidates:
+        if hist is not None:
+            break
         try:
-            hist = fetch_sina_spot_ohlcv(clean_code, interval=interval, range_str=range_str)
+            hist = fn()
         except Exception as exc:
-            errors.append(f"sina: {exc}")
+            errors.append(f"{label}: {exc}")
 
     if hist is None:
         with _CACHE_LOCK:
@@ -978,6 +1313,8 @@ def _get_spot_history(
         if old is not None:
             return old[1]
         raise RuntimeError(f"获取 {clean_code} 历史底图失败: {'; '.join(errors)}")
+
+    hist = _calibrate_usdt_bars_to_usd(hist, clean_code)
 
     with _CACHE_LOCK:
         _HIST_CACHE[hkey] = (now, hist)
@@ -1483,6 +1820,10 @@ def fetch_ohlcv(
             result = fetch_eastmoney_ohlcv(sym, interval=interval, range_str=range_str, adjust=adjust)
         elif prov == "sina":
             result = fetch_sina_spot_ohlcv(sym, interval=interval, range_str=range_str)
+        elif prov == "gate":
+            result = fetch_gate_spot_ohlcv(sym, interval=interval, range_str=range_str)
+        elif prov == "bitget":
+            result = fetch_bitget_spot_ohlcv(sym, interval=interval, range_str=range_str)
         elif prov == "twelvedata":
             result = fetch_twelvedata_ohlcv(sym, interval=interval, range_str=range_str)
         elif prov == "binance":
