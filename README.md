@@ -36,7 +36,8 @@ skills/
 │   ├── backtesting/        # 7×24h 策略全流程回测（30+ 风险指标、走步交叉验证）
 │   ├── portfolio/          # 多币种资产配置优化与 HRP 层次化风险平价
 │   ├── option-pricing/     # 加密期权定价、隐含波动率（IV）曲面与偏度 (Skew) 分析
-│   └── kline-chart/        # 7×24h 实时交互 K 线看板与离线 HTML 导出 (Lightweight Charts)
+│   ├── flowsurface/        # 原生 Rust/GPU 实时桌面看盘终端 (订单流、DOM 盘口与毫秒级 K 线)
+│   └── kline-chart/        # 离线交互 K 线 HTML 导出引擎 (Lightweight Charts)
 └── [宏观流动性与长周期历史]
     ├── fred-macro/         # 美联储全球流动性时序 (资产负债表 WALCL, 货币量 M2)
     └── yahoo-finance/      # 主流币历史时序、加密 ETF (IBIT) 及概念股 (COIN/MSTR)
@@ -51,7 +52,8 @@ skills/
 - **[backtesting](./skills/backtesting/)**：学术级 5 阶段回测框架，专为高波动资产优化。内置 30+ 种风险收益比率（夏普、索提诺、卡玛、最大回撤、CVaR 等）、10 大类技术指标、走步向前（Walk-forward）交叉验证与 t-Copula 极端前瞻模拟。
 - **[portfolio](./skills/portfolio/)**：用于求解多币种投资组合的最优配置权重。提供层次化风险平价（HRP）与嵌套聚类优化（NCO），有效解决加密资产之间的高相关性与协方差病态问题。
 - **[option-pricing](./skills/option-pricing/)**：用于 BTC/ETH 加密期权（对标 Deribit / OKX 期权）定价与对冲分析。支持 Black-Scholes、二叉树、蒙特卡洛及 Heston 随机波动率模型，计算 Greeks 与 IV 偏度。
-- **[kline-chart](./skills/kline-chart/)**：独立桌面行情客户端与交互式 K 线引擎（基于 TradingView Lightweight Charts v4.2.3）。统一直连 Gate.io 现货公开实时行情（免 Key，覆盖主流币与 2,100+ 山寨币种），内置左侧自选标的实时报价列表、5 秒级无闪烁刷新、均线/布林带/策略买卖点叠加及离线静态 HTML 导出。
+- **[flowsurface](./skills/flowsurface/)**：原生 Rust/GPU 桌面实时看盘终端（集成 [flowsurface/](./flowsurface/)，基于 `iced` + `wgpu`）。原生支持 `Binance`、`Bybit`、`Hyperliquid`、`OKX` 与 `MEXC` 毫秒级 WebSocket 逐笔成交、实时盘口深度梯子 (DOM)、历史挂单热力图与 Footprint K 线，启动器自动注入系统代理与本地时区。
+- **[kline-chart](./skills/kline-chart/)**：交互式 K 线分析与离线单文件 HTML 导出引擎（基于 TradingView Lightweight Charts v4.2.3），支持均线/布林带叠加、策略买卖点标记与 `--csv` 离线导出。
 
 ### 3. 宏观流动性与跨市场数据 (Macro & Cross-Asset)
 - **[fred-macro](./skills/fred-macro/)**：获取美联储全球流动性数据（资产负债表 `WALCL`、货币供应量 `WM2NS`、基准利率 `FEDFUNDS`），构建加密宏观周期顶底指标。
@@ -107,15 +109,15 @@ python skills/yahoo-finance/scripts/fetch_quote.py --tickers BTC-USD,ETH-USD,IBI
 python skills/portfolio/scripts/cli.py hrp
 ```
 
-### 5. 启动加密货币独立桌面行情客户端
+### 5. 启动加密货币原生实时看盘桌面端 (Flowsurface)
 ```bash
-# 方式一：直接双击根目录 launch_client.bat，或命令行启动独立桌面窗口
-python skills/kline-chart/scripts/desktop_app.py
+# 方式一：直接双击根目录 launch_client.bat 或 客户端.lnk 启动原生桌面客户端
+python skills/flowsurface/scripts/launch_flowsurface.py
 
-# 启动时直接定位指定币种（支持 BTC / TAUSDT / TA_USDT 等写法）
-python skills/kline-chart/scripts/desktop_app.py --symbol TAUSDT --interval 15m
+# 若本机已安装 Rust 工具链，从 flowsurface/ 源码编译 release 版并启动
+python skills/flowsurface/scripts/launch_flowsurface.py --build
 
-# 导出单文件离线交互 K 线 HTML
+# 导出单文件离线交互 K 线 HTML (kline-chart)
 python skills/kline-chart/scripts/kline_chart.py export --symbol BTCUSDT --interval 1h --range 1mo -o D:/empty/btc_kline.html
 ```
 

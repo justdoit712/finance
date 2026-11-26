@@ -4,13 +4,13 @@ cd /d "%~dp0"
 
 where pythonw >nul 2>nul
 if %errorlevel%==0 (
-    start "" pythonw "skills\kline-chart\scripts\desktop_app.py" %*
+    start "" pythonw "skills\flowsurface\scripts\launch_flowsurface.py" %*
     exit /b 0
 )
 
 where python >nul 2>nul
 if %errorlevel%==0 (
-    python "skills\kline-chart\scripts\desktop_app.py" %*
+    python "skills\flowsurface\scripts\launch_flowsurface.py" %*
     if not %errorlevel%==0 pause
     exit /b %errorlevel%
 )
