@@ -1,0 +1,33 @@
+language(1)
+indicator("ETHUSDT BB Mean Reversion", id = "strategy.ethusdt", max_bars_back = 2)
+display(view = "plot", attachment = "overlay")
+format(precision = "base_ticker_min_tick")
+style("bull", title = "Long / Fast", role = "success", shade = "base")
+style("bear", title = "Short / Slow", role = "danger", shade = "base")
+style("mid", title = "Basis / Filter", role = "neutral", shade = "base")
+style("band", title = "Band Fill", role = "primary", shade = "faint")
+bb_len = input.int(16, "BB Period", min = 5, max = 200)
+bb_std = input.float(2.4, "BB Std", min = 0.5, max = 5.0)
+rsi_os = input.float(28.0, "RSI Oversold", min = 10.0, max = 45.0)
+trend_len = input.int(200, "Macro EMA", min = 20, max = 500)
+basis = ta.sma(chart.close, bb_len)
+dev = ta.stdev(chart.close, bb_len) * bb_std
+upper = basis + dev
+lower = basis - dev
+rsi_val = ta.rsi(chart.close, 14)
+macro_ema = ta.ema(chart.close, trend_len)
+entry_long = !na(lower) && !na(rsi_val) && !na(macro_ema) && chart.close < lower && rsi_val <= rsi_os && chart.close >= macro_ema * 0.94
+entry_short = !na(upper) && !na(rsi_val) && !na(macro_ema) && chart.close > upper && rsi_val >= 72.0 && chart.close <= macro_ema * 1.06
+plot(basis, id = "bb_mid", title = "BB Basis", precision = "instrument", color_slot = "mid", width = 1.0, pane = "main")
+plot(upper, id = "bb_upper", title = "BB Upper", precision = "instrument", color_slot = "bear", width = 1.1, pane = "main")
+plot(lower, id = "bb_lower", title = "BB Lower", precision = "instrument", color_slot = "bull", width = 1.1, pane = "main")
+plot(macro_ema, id = "macro_ema", title = "Macro EMA", precision = "instrument", color_slot = "mid", width = 1.2, pane = "main")
+fill(upper = "bb_upper", lower = "bb_lower", geometry = "series_band", color_slot = "band", opacity = 0.10)
+allow_long = false
+allow_short = true
+long_sig = select(allow_long && entry_long, chart.low, na)
+short_sig = select(allow_short && entry_short, chart.high, na)
+plot(long_sig, id = "long_entry", title = "Long Entry", precision = "instrument", color_slot = "bull", width = 5, pane = "main")
+plot(short_sig, id = "short_entry", title = "Short Entry", precision = "instrument", color_slot = "bear", width = 5, pane = "main")
+mark(title = "Long Signal", source = "long_entry", kind = "point", color_slot = "bull")
+mark(title = "Short Signal", source = "short_entry", kind = "point", color_slot = "bear")

@@ -1,0 +1,21 @@
+symbol: ETHUSDT
+timeframe: 1h
+family: bb_mean_reversion
+family_zh: 布林+RSI 均值回归
+direction: short_only
+verdict: NO_EDGE
+params:
+  bb_len: 16
+  bb_std: 2.4
+  rsi_os: 28.0
+  atr_sl_mult: 2.5
+risk:
+  atr_period: 14
+  atr_tp_mult: 3.0
+  atr_trail_mult: null
+  cooldown_bars: 3
+  atr_sl_mult: 2.5
+costs:
+  fee_rate: 0.0005
+  slippage: 0.0003
+days: 180

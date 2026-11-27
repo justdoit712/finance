@@ -1,0 +1,21 @@
+symbol: TAUSDT
+timeframe: 15m
+family: rsi_momentum_pullback
+family_zh: 趋势回踩 RSI 恢复
+direction: short_only
+verdict: PASS
+params:
+  trend_len: 100
+  rsi_len: 14
+  pullback_low: 36.0
+  atr_sl_mult: 2.6
+risk:
+  atr_period: 14
+  atr_tp_mult: 3.6
+  atr_trail_mult: null
+  cooldown_bars: 2
+  atr_sl_mult: 2.6
+costs:
+  fee_rate: 0.0005
+  slippage: 0.0003
+days: 90

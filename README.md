@@ -34,6 +34,7 @@ skills/
 │   └── tradingview/        # 全网交易所 (Binance/OKX等) 选币扫描与预计算技术指标
 ├── [量化投研、可视化与计算引擎]
 │   ├── backtesting/        # 7×24h 策略全流程回测（30+ 风险指标、走步交叉验证）
+│   ├── ticker-strategy/    # 单标的专属策略工厂（一标一策：画像、海选、样本外验证与 .ind 导出）
 │   ├── portfolio/          # 多币种资产配置优化与 HRP 层次化风险平价
 │   ├── option-pricing/     # 加密期权定价、隐含波动率（IV）曲面与偏度 (Skew) 分析
 │   └── flowsurface/        # 原生 Rust/GPU 实时桌面看盘终端 (订单流、DOM 盘口与毫秒级 K 线)
@@ -49,6 +50,7 @@ skills/
 
 ### 2. 底层量化策略、可视化与计算引擎 (Tools)
 - **[backtesting](./skills/backtesting/)**：学术级 5 阶段回测框架，专为高波动资产优化。内置 30+ 种风险收益比率（夏普、索提诺、卡玛、最大回撤、CVaR 等）、10 大类技术指标、走步向前（Walk-forward）交叉验证与 t-Copula 极端前瞻模拟。
+- **[ticker-strategy](./skills/ticker-strategy/)**：单标的专属量化策略工厂（一标一策）。自动拉取币安 U 本位/TradFi 永续历史 K 线、资金费率与持仓量，完成标的体检、多策略家族竞技寻优、走步向前交叉验证与参数高原检测，并输出独立策略代码与 Flowsurface `.ind` 指标。
 - **[portfolio](./skills/portfolio/)**：用于求解多币种投资组合的最优配置权重。提供层次化风险平价（HRP）与嵌套聚类优化（NCO），有效解决加密资产之间的高相关性与协方差病态问题。
 - **[option-pricing](./skills/option-pricing/)**：用于 BTC/ETH 加密期权（对标 Deribit / OKX 期权）定价与对冲分析。支持 Black-Scholes、二叉树、蒙特卡洛及 Heston 随机波动率模型，计算 Greeks 与 IV 偏度。
 - **[flowsurface](./skills/flowsurface/)**：原生 Rust/GPU 桌面实时看盘终端（集成 [flowsurface/](./flowsurface/)，基于 `iced` + `wgpu`）。原生支持 `Binance`、`Bybit`、`Hyperliquid`、`OKX` 与 `MEXC` 毫秒级 WebSocket 逐笔成交、实时盘口深度梯子 (DOM)、历史挂单热力图与 Footprint K 线，启动器自动注入系统代理与本地时区。
@@ -114,6 +116,15 @@ python skills/flowsurface/scripts/launch_flowsurface.py
 
 # 若本机已安装 Rust 工具链，从 flowsurface/ 源码编译 release 版并启动
 python skills/flowsurface/scripts/launch_flowsurface.py --build
+```
+
+### 6. 为单个标的生成专属量化策略
+```bash
+# 生成 ETHUSDT 独立策略包（画像 + 多家族寻优 + Walk-Forward 样本外验证 + Flowsurface .ind）
+python skills/ticker-strategy/scripts/build_strategy.py build --symbol ETHUSDT --timeframes 15m,1h,4h --days 180
+
+# 针对单标的修改 strategies/ETHUSDT/strategy.py 后一键复跑验证
+python skills/ticker-strategy/scripts/build_strategy.py rerun --symbol ETHUSDT
 ```
 
 
