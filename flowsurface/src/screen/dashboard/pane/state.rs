@@ -65,6 +65,7 @@ pub enum Effect {
     RefreshStreams,
     RequestFetch(Vec<FetchSpec>),
     SwitchTickersInGroup(TickerInfo),
+    ToggleFavorite(exchange::Ticker),
     FocusWidget(iced::widget::Id),
     OpenUrl(String),
     OpenNetworkSettings,
@@ -111,6 +112,7 @@ pub enum Event {
     Settings(settings::Message),
     StreamModifierChanged(modal::stream::Message),
     MiniTickersListInteraction(modal::pane::mini_tickers_list::Message),
+    ToggleFavorite(exchange::Ticker),
 }
 
 pub struct State {
@@ -425,6 +427,33 @@ impl State {
                 .height(widget::PANE_CONTROL_BTN_HEIGHT);
 
             top_left_buttons = top_left_buttons.push(tickers_list_btn);
+
+            let is_fav = tickers_table.is_favorited(&base_ti.ticker);
+            let fav_btn = button(
+                icon_text(if is_fav { Icon::StarFilled } else { Icon::Star }, 12)
+                    .align_y(Alignment::Center)
+                    .style(move |theme: &Theme| iced::widget::text::Style {
+                        color: Some(if is_fav {
+                            style::FAVORITE_STAR_COLOR
+                        } else {
+                            theme.extended_palette().secondary.weak.color
+                        }),
+                    }),
+            )
+            .on_press(Message::PaneEvent(id, Event::ToggleFavorite(base_ti.ticker)))
+            .style(move |theme, status| style::button::modifier(theme, status, !is_fav))
+            .height(widget::PANE_CONTROL_BTN_HEIGHT);
+
+            let fav_tooltip = if is_fav {
+                "Remove from favorites"
+            } else {
+                "Add to favorites"
+            };
+            top_left_buttons = top_left_buttons.push(widget::tooltip(
+                fav_btn,
+                Some(fav_tooltip),
+                tooltip::Position::Bottom,
+            ));
         } else if !matches!(self.content, Content::Starter) && !self.has_stream() {
             let content = row![
                 text("Choose a ticker")
@@ -702,7 +731,7 @@ impl State {
             top_left_buttons
                 .padding(padding::left(4))
                 .align_y(Alignment::Center)
-                .spacing(8)
+                .spacing(4)
                 .height(Length::Fixed(32.0)),
         )
         .controls(top_right_buttons)
@@ -969,6 +998,9 @@ impl State {
                         }
                     }
                 }
+            }
+            Event::ToggleFavorite(ticker) => {
+                return Some(Effect::ToggleFavorite(ticker));
             }
         }
         None

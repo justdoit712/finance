@@ -216,7 +216,7 @@ pub(super) async fn fetch_ticker_metadata(
         }
 
         if let Some(contract_type) = item["contractType"].as_str()
-            && contract_type != "PERPETUAL"
+            && !matches!(contract_type, "PERPETUAL" | "TRADIFI_PERPETUAL")
         {
             continue;
         }

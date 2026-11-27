@@ -19,7 +19,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             favorited_tickers: vec![],
-            show_favorites: false,
+            show_favorites: true,
             selected_sort_option: SortOptions::VolumeDesc,
             // [CUSTOM: binance-usdt-perps-only]
             selected_exchanges: vec![Venue::Binance],

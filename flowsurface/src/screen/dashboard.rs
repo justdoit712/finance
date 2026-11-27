@@ -89,6 +89,7 @@ pub enum Event {
         command: presets::Command,
     },
     IndicatorCatalog(manifest::Message),
+    ToggleFavorite(exchange::Ticker),
 }
 
 impl Dashboard {
@@ -748,7 +749,7 @@ impl Dashboard {
         ticker_info: TickerInfo,
         content_kind: ContentKind,
     ) -> Task<Message> {
-        let initial_pane = if self.focus.is_none() && self.panes.len() == 1 {
+        let initial_pane = if self.focus.is_none() {
             self.panes.iter().next().map(|(pane_id, _)| *pane_id)
         } else {
             None
@@ -790,7 +791,7 @@ impl Dashboard {
         main_window: window::Id,
         ticker_info: TickerInfo,
     ) -> Task<Message> {
-        let initial_pane = if self.focus.is_none() && self.panes.len() == 1 {
+        let initial_pane = if self.focus.is_none() {
             self.panes.iter().next().map(|(pane_id, _)| *pane_id)
         } else {
             None
@@ -833,7 +834,10 @@ impl Dashboard {
             Task::batch(tasks)
         } else if let Some((window, pane)) = self.focus {
             if let Some(state) = self.get_mut_pane(main_window, window, pane) {
-                let content_kind = state.content.kind();
+                let content_kind = match state.content.kind() {
+                    ContentKind::Starter => ContentKind::CandlestickChart,
+                    other => other,
+                };
                 self.init_focused_pane(data_sources, main_window, ticker_info, content_kind)
             } else {
                 Task::done(Message::Notification(Toast::warn(
@@ -1310,6 +1314,9 @@ impl Dashboard {
                 self.switch_tickers_in_group(data_sources, main_window, ticker_info),
                 None,
             ),
+            Some(pane::Effect::ToggleFavorite(ticker)) => {
+                (Task::none(), Some(Event::ToggleFavorite(ticker)))
+            }
             Some(pane::Effect::FocusWidget(id)) => (iced::widget::operation::focus(id), None),
             Some(pane::Effect::OpenNetworkSettings) => {
                 (Task::none(), Some(Event::OpenNetworkSettings))

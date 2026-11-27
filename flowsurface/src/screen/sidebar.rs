@@ -32,6 +32,7 @@ pub enum Action {
         exchange::TickerInfo,
         Option<data::layout::pane::ContentKind>,
     ),
+    FavoritesChanged,
     ErrorOccurred(data::InternalError),
     MenuChanged(Option<sidebar::Menu>),
 }
@@ -79,6 +80,10 @@ impl Sidebar {
                             Task::none(),
                             Some(Action::TickerSelected(ticker_info, content)),
                         );
+                    }
+                    Some(tickers_table::Action::FavoritesChanged) => {
+                        self.sync_tickers_table_settings();
+                        return (Task::none(), Some(Action::FavoritesChanged));
                     }
                     Some(tickers_table::Action::Fetch(task)) => {
                         return (task.map(Message::TickersTable), None);
@@ -167,22 +172,52 @@ impl Sidebar {
             )
         };
 
+        let is_search_active = is_table_open && !self.tickers_table.favorites_only;
+        let is_fav_active = is_table_open && self.tickers_table.favorites_only;
+        let has_favs = !self.tickers_table.favorited_tickers.is_empty();
+
         let ticker_search_button = {
             button_with_tooltip(
                 icon_text(Icon::Search, 14)
                     .width(24)
                     .align_x(Alignment::Center),
                 Message::TickersTable(self::tickers_table::Message::ToggleTable),
-                None,
+                Some("Search"),
                 tooltip_position,
                 move |theme, status| {
-                    crate::style::button::transparent(theme, status, is_table_open)
+                    crate::style::button::transparent(theme, status, is_search_active)
                 },
+            )
+        };
+
+        let favorites_button = {
+            let icon = if is_fav_active || has_favs {
+                Icon::StarFilled
+            } else {
+                Icon::Star
+            };
+
+            button_with_tooltip(
+                icon_text(icon, 14)
+                    .width(24)
+                    .align_x(Alignment::Center)
+                    .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(if is_fav_active || has_favs {
+                            crate::style::FAVORITE_STAR_COLOR
+                        } else {
+                            theme.extended_palette().background.base.text
+                        }),
+                    }),
+                Message::TickersTable(self::tickers_table::Message::ToggleFavoritesTable),
+                Some("Favorites"),
+                tooltip_position,
+                move |theme, status| crate::style::button::transparent(theme, status, is_fav_active),
             )
         };
 
         column![
             ticker_search_button,
+            favorites_button,
             layout_modal_button,
             space::vertical(),
             settings_modal_button,
@@ -219,6 +254,11 @@ impl Sidebar {
 
     pub fn set_menu(&mut self, menu: Option<sidebar::Menu>) {
         self.state.active_menu = menu;
+    }
+
+    pub fn toggle_favorite(&mut self, ticker: exchange::Ticker) {
+        self.tickers_table.favorite_ticker(ticker);
+        self.sync_tickers_table_settings();
     }
 
     pub fn sync_tickers_table_settings(&mut self) {

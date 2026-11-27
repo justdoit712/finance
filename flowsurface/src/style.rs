@@ -117,6 +117,8 @@ impl From<Icon> for char {
     }
 }
 
+pub const FAVORITE_STAR_COLOR: iced::Color = iced::Color::from_rgb(0.96, 0.77, 0.26);
+
 pub fn icon_text<'a>(icon: Icon, size: u16) -> Text<'a, Theme, Renderer> {
     iced::widget::text(char::from(icon).to_string())
         .font(ICONS_FONT)

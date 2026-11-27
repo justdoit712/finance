@@ -411,6 +411,10 @@ impl Flowsurface {
                     Some(dashboard::Event::IndicatorCatalog(message)) => {
                         self.update_shared_chart_resources(message)
                     }
+                    Some(dashboard::Event::ToggleFavorite(ticker)) => {
+                        self.sidebar.toggle_favorite(ticker);
+                        self.save_now()
+                    }
                     None => Task::none(),
                 };
 
@@ -619,6 +623,9 @@ impl Flowsurface {
                         };
 
                         return self.map_dashboard_task(dashboard_task, None);
+                    }
+                    Some(screen::sidebar::Action::FavoritesChanged) => {
+                        return task.map(Message::Sidebar).chain(self.save_now());
                     }
                     Some(screen::sidebar::Action::ErrorOccurred(err)) => {
                         self.notifications.push(Toast::error(err.to_string()));

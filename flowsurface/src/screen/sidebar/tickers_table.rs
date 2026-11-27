@@ -66,6 +66,7 @@ fn available_markets(venue: Venue) -> &'static [MarketKind] {
 
 pub enum Action {
     TickerSelected(TickerInfo, Option<ContentKind>),
+    FavoritesChanged,
     ErrorOccurred(data::InternalError),
     Fetch(Task<Message>),
     FocusWidget(iced::widget::Id),
@@ -84,6 +85,7 @@ pub enum Message {
     ToggleExchangeFilter(Venue),
     DebounceExchangeFetchTick,
     ToggleTable,
+    ToggleFavoritesTable,
     ToggleFavorites,
     FetchStats,
     /// Metadata for a venue, tagged with its origin. A fresh network result
@@ -106,6 +108,7 @@ pub struct TickersTable {
     pub expand_ticker_card: Option<Ticker>,
     scroll_offset: AbsoluteOffset,
     pub is_shown: bool,
+    pub favorites_only: bool,
     unavailable_exchanges: FxHashSet<Venue>,
     selected_exchanges: FxHashSet<Venue>,
     selected_markets: FxHashSet<MarketKind>,
@@ -151,6 +154,7 @@ impl TickersTable {
                 expand_ticker_card: None,
                 scroll_offset: AbsoluteOffset::default(),
                 is_shown: false,
+                favorites_only: false,
                 unavailable_exchanges: FxHashSet::default(),
                 selected_exchanges: settings.selected_exchanges.iter().cloned().collect(),
                 selected_markets: settings.selected_markets.iter().cloned().collect(),
@@ -190,6 +194,7 @@ impl TickersTable {
             }
             Message::FavoriteTicker(ticker) => {
                 self.favorite_ticker(ticker);
+                return Some(Action::FavoritesChanged);
             }
             Message::Scrolled(viewport) => {
                 self.scroll_offset = viewport.absolute_offset();
@@ -246,7 +251,9 @@ impl TickersTable {
                 }
             }
             Message::ToggleFavorites => {
-                self.show_favorites = !self.show_favorites;
+                self.favorites_only = !self.favorites_only;
+                self.expand_ticker_card = None;
+                self.scroll_offset = AbsoluteOffset::default();
             }
             Message::TickerSelected(ticker, content) => {
                 let ticker_info = self.metadata.tickers().get(&ticker).cloned().flatten();
@@ -261,23 +268,26 @@ impl TickersTable {
                 }
             }
             Message::ToggleTable => {
-                self.is_shown = !self.is_shown;
-
-                if self.is_shown {
-                    self.display_cache.clear();
-                    for row in self.ticker_rows.iter_mut() {
-                        row.previous_stats = None;
-                        let precision = self
-                            .metadata
-                            .tickers()
-                            .get(&row.ticker)
-                            .and_then(|info| info.as_ref().map(|ti| ti.min_ticksize));
-                        self.display_cache.insert(
-                            row.ticker,
-                            compute_display_data(&row.ticker, &row.stats, None, precision),
-                        );
-                    }
-
+                if self.is_shown && !self.favorites_only {
+                    self.is_shown = false;
+                } else {
+                    self.is_shown = true;
+                    self.favorites_only = false;
+                    self.expand_ticker_card = None;
+                    self.scroll_offset = AbsoluteOffset::default();
+                    self.refresh_display_cache();
+                    return Some(Action::FocusWidget("full_ticker_search_box".into()));
+                }
+            }
+            Message::ToggleFavoritesTable => {
+                if self.is_shown && self.favorites_only {
+                    self.is_shown = false;
+                } else {
+                    self.is_shown = true;
+                    self.favorites_only = true;
+                    self.expand_ticker_card = None;
+                    self.scroll_offset = AbsoluteOffset::default();
+                    self.refresh_display_cache();
                     return Some(Action::FocusWidget("full_ticker_search_box".into()));
                 }
             }
@@ -444,16 +454,38 @@ impl TickersTable {
         self.sort_ticker_rows();
     }
 
-    fn favorite_ticker(&mut self, ticker: Ticker) {
-        if let Some(&idx) = self.row_index.get(&ticker) {
-            let row = &mut self.ticker_rows[idx];
-            row.is_favorited = !row.is_favorited;
+    pub fn is_favorited(&self, ticker: &Ticker) -> bool {
+        self.favorited_tickers.contains(ticker)
+    }
 
-            if row.is_favorited {
-                self.favorited_tickers.insert(ticker);
-            } else {
-                self.favorited_tickers.remove(&ticker);
-            }
+    pub fn favorite_ticker(&mut self, ticker: Ticker) {
+        let now_fav = if self.favorited_tickers.contains(&ticker) {
+            self.favorited_tickers.remove(&ticker);
+            false
+        } else {
+            self.favorited_tickers.insert(ticker);
+            true
+        };
+
+        if let Some(&idx) = self.row_index.get(&ticker) {
+            self.ticker_rows[idx].is_favorited = now_fav;
+        }
+    }
+
+    fn refresh_display_cache(&mut self) {
+        self.display_cache.clear();
+        for row in self.ticker_rows.iter_mut() {
+            row.previous_stats = None;
+            row.is_favorited = self.favorited_tickers.contains(&row.ticker);
+            let precision = self
+                .metadata
+                .tickers()
+                .get(&row.ticker)
+                .and_then(|info| info.as_ref().map(|ti| ti.min_ticksize));
+            self.display_cache.insert(
+                row.ticker,
+                compute_display_data(&row.ticker, &row.stats, None, precision),
+            );
         }
     }
 
@@ -474,6 +506,7 @@ impl TickersTable {
                 let previous_price = Some(row.stats.mark_price);
                 row.previous_stats = Some(row.stats);
                 row.stats = new_stats;
+                row.is_favorited = self.favorited_tickers.contains(&ticker);
 
                 self.display_cache.insert(
                     ticker,
@@ -516,14 +549,20 @@ impl TickersTable {
 impl TickersTable {
     /// Full table view with search, sorting, and filtering options.
     pub fn view(&self, bounds: Size) -> Element<'_, Message> {
-        let (fav_rows, rest_rows) = self.filtered_rows(&self.search_query, None);
+        let has_any_favorites = !self.favorited_tickers.is_empty();
+        let (fav_rows, rest_rows) = self.collect_rows(
+            &self.search_query,
+            None,
+            self.favorites_only,
+            has_any_favorites,
+        );
         let fav_n = fav_rows.len();
         let rest_n = rest_rows.len();
-        let has_any_favorites = !self.favorited_tickers.is_empty();
 
         let top_bar = self.top_bar();
         let sort_and_filter = self.sort_and_filter_col(fav_n, rest_n);
 
+        let show_separator = !self.favorites_only && has_any_favorites;
         let sep_block_height = self.separator_height(fav_n);
         let header_offset = self.header_offset();
 
@@ -531,7 +570,7 @@ impl TickersTable {
             row_height: TICKER_CARD_HEIGHT,
             header_offset,
             overscan: OVERSCAN_BUFFER as usize,
-            gap: if self.show_favorites {
+            gap: if show_separator {
                 Some((fav_n, sep_block_height))
             } else {
                 None
@@ -539,15 +578,6 @@ impl TickersTable {
         };
         let total_rows = fav_n + rest_n;
         let win = virtual_list_cfg.window(self.scroll_offset.y, bounds.height, total_rows);
-
-        let list = self.virtual_list(
-            &virtual_list_cfg,
-            win,
-            &fav_rows,
-            &rest_rows,
-            sep_block_height,
-            has_any_favorites,
-        );
 
         let mut content = column![top_bar]
             .spacing(8)
@@ -557,7 +587,35 @@ impl TickersTable {
         if self.show_sort_options {
             content = content.push(sort_and_filter);
         }
-        content = content.push(list);
+
+        if self.favorites_only && fav_rows.is_empty() {
+            let hint = if has_any_favorites {
+                "No favorites match search"
+            } else {
+                "No favorites yet — click ☆ on any chart or ticker"
+            };
+            content = content.push(
+                container(
+                    text(hint)
+                        .size(crate::style::text_size::SMALL)
+                        .align_x(Horizontal::Center)
+                        .style(style::secondary_text),
+                )
+                .width(Length::Fill)
+                .padding([16, 8])
+                .align_x(Horizontal::Center),
+            );
+        } else {
+            let list = self.virtual_list(
+                &virtual_list_cfg,
+                win,
+                &fav_rows,
+                &rest_rows,
+                sep_block_height,
+                has_any_favorites,
+            );
+            content = content.push(list);
+        }
 
         scrollable::Scrollable::with_direction(
             content,
@@ -714,7 +772,7 @@ impl TickersTable {
     }
 
     fn separator_height(&self, fav_n: usize) -> f32 {
-        if self.show_favorites {
+        if !self.favorites_only && !self.favorited_tickers.is_empty() {
             FAVORITES_SEPARATOR_HEIGHT
                 + if fav_n == 0 {
                     FAVORITES_EMPTY_HINT_HEIGHT
@@ -903,12 +961,19 @@ impl TickersTable {
                 icon_text(Icon::StarFilled, 12)
                     .align_x(Horizontal::Center)
                     .align_y(Vertical::Center)
+                    .style(move |theme: &Theme| iced::widget::text::Style {
+                        color: Some(if self.favorites_only {
+                            style::FAVORITE_STAR_COLOR
+                        } else {
+                            theme.extended_palette().background.base.text
+                        }),
+                    }),
             )
             .width(28)
             .height(28)
             .on_press(Message::ToggleFavorites)
             .style(move |theme, status| {
-                style::button::transparent(theme, status, self.show_favorites)
+                style::button::transparent(theme, status, self.favorites_only)
             })
         ]
         .align_y(Vertical::Center)
@@ -916,22 +981,26 @@ impl TickersTable {
         .into()
     }
 
-    fn filtered_rows<'a>(
+    fn collect_rows<'a>(
         &'a self,
         search_upper: &str,
         excluded: Option<&FxHashSet<Ticker>>,
+        favorites_only: bool,
+        pin_favorites: bool,
     ) -> (Vec<&'a TickerRowData>, Vec<&'a TickerRowData>) {
         let matches_market =
             |row: &TickerRowData| self.selected_markets.contains(&row.ticker.market_type());
         let matches_exchange =
             |row: &TickerRowData| self.selected_exchanges.contains(&row.exchange.venue());
 
+        let include_fav = favorites_only || pin_favorites;
+
         // Collect fav_rows with search ranks
-        let mut fav_rows: Vec<_> = if self.show_favorites {
+        let mut fav_rows: Vec<_> = if include_fav {
             self.ticker_rows
                 .iter()
                 .filter(|row| {
-                    row.is_favorited
+                    self.favorited_tickers.contains(&row.ticker)
                         && !excluded.is_some_and(|ex| ex.contains(&row.ticker))
                         && matches_market(row)
                         && matches_exchange(row)
@@ -953,12 +1022,16 @@ impl TickersTable {
         });
         let fav_rows: Vec<&TickerRowData> = fav_rows.into_iter().map(|(row, _)| row).collect();
 
+        if favorites_only {
+            return (fav_rows, Vec::new());
+        }
+
         // Collect rest_rows with search ranks
         let mut rest_rows: Vec<_> = self
             .ticker_rows
             .iter()
             .filter(|row| {
-                (!self.show_favorites || !row.is_favorited)
+                (!pin_favorites || !self.favorited_tickers.contains(&row.ticker))
                     && !excluded.is_some_and(|ex| ex.contains(&row.ticker))
                     && matches_market(row)
                     && matches_exchange(row)
@@ -983,8 +1056,10 @@ impl TickersTable {
         exchange: Exchange,
         ticker: &'a Ticker,
         display_data: &'a TickerDisplayData,
-        is_fav: bool,
+        _is_fav: bool,
     ) -> Element<'a, Message> {
+        let is_fav = self.is_favorited(ticker);
+        let quick_switch = self.favorites_only;
         if let Some(selected_ticker) = &self.expand_ticker_card {
             let selected_exchange = selected_ticker.exchange;
             if ticker == selected_ticker && exchange == selected_exchange {
@@ -992,16 +1067,17 @@ impl TickersTable {
                     .style(style::ticker_card)
                     .into()
             } else {
-                Self::ticker_card(ticker, display_data)
+                Self::ticker_card(ticker, display_data, quick_switch)
             }
         } else {
-            Self::ticker_card(ticker, display_data)
+            Self::ticker_card(ticker, display_data, quick_switch)
         }
     }
 
     fn ticker_card<'a>(
         ticker: &Ticker,
         display_data: &'a TickerDisplayData,
+        quick_switch: bool,
     ) -> Element<'a, Message> {
         let color_column = container(column![])
             .height(Length::Fill)
@@ -1076,7 +1152,11 @@ impl TickersTable {
                 .align_y(Alignment::Center),
             )
             .style(style::button::ticker_card)
-            .on_press(Message::ExpandTickerCard(Some(*ticker))),
+            .on_press(if quick_switch {
+                Message::TickerSelected(*ticker, None)
+            } else {
+                Message::ExpandTickerCard(Some(*ticker))
+            }),
         )
         .height(Length::Fixed(56.0))
         .into()
@@ -1406,7 +1486,7 @@ impl TickersTable {
         injected_q: &str,
         excluded: &FxHashSet<Ticker>,
     ) -> (Vec<&'a TickerRowData>, Vec<&'a TickerRowData>) {
-        self.filtered_rows(injected_q, Some(excluded))
+        self.collect_rows(injected_q, Some(excluded), false, true)
     }
 
     fn header_offset_compact(&self, selected_count: usize) -> f32 {
