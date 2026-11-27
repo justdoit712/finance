@@ -1,7 +1,6 @@
 use super::{
     AdapterError, Event, Exchange, KlinePage, MarketKind, StreamConfig, StreamKind, StreamTicksize,
-    Venue,
-    hub::{binance, bybit, hyperliquid, mexc, okex},
+    Venue, hub::binance,
 };
 use crate::{
     Kline, OpenInterest, TickMultiplier, Ticker, TickerInfo, TickerStats, Timeframe, Trade, UnixMs,
@@ -18,10 +17,6 @@ pub const MAX_KLINE_STREAMS_PER_STREAM: usize = 100;
 #[derive(Clone)]
 pub struct AdapterHandles {
     binance: Option<binance::BinanceHandle>,
-    bybit: Option<bybit::BybitHandle>,
-    hyperliquid: Option<hyperliquid::HyperliquidHandle>,
-    okex: Option<okex::OkexHandle>,
-    mexc: Option<mexc::MexcHandle>,
 }
 
 impl AdapterHandles {
@@ -35,19 +30,6 @@ impl AdapterHandles {
             Venue::Binance => {
                 self.binance = Some(binance::BinanceHandle::new(client.clone(), proxy)?);
             }
-            Venue::Bybit => {
-                self.bybit = Some(bybit::BybitHandle::new(client.clone(), proxy)?);
-            }
-            Venue::Hyperliquid => {
-                self.hyperliquid =
-                    Some(hyperliquid::HyperliquidHandle::new(client.clone(), proxy)?);
-            }
-            Venue::Okex => {
-                self.okex = Some(okex::OkexHandle::new(client.clone(), proxy)?);
-            }
-            Venue::Mexc => {
-                self.mexc = Some(mexc::MexcHandle::new(client.clone(), proxy)?);
-            }
         }
 
         Ok(())
@@ -58,13 +40,7 @@ impl AdapterHandles {
         venues: impl IntoIterator<Item = Venue>,
         proxy: Option<&super::proxy::Proxy>,
     ) -> Self {
-        let mut out = Self {
-            binance: None,
-            bybit: None,
-            hyperliquid: None,
-            okex: None,
-            mexc: None,
-        };
+        let mut out = Self { binance: None };
 
         for venue in venues {
             if let Err(err) = out.spawn_venue(client, venue, proxy) {
@@ -151,30 +127,6 @@ impl AdapterHandles {
                 .map_or_else(missing_venue_stream, |handle| {
                     handle.connect_kline_stream(streams, market_kind).boxed()
                 }),
-            Venue::Bybit => self
-                .bybit
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_kline_stream(streams, market_kind).boxed()
-                }),
-            Venue::Hyperliquid => self
-                .hyperliquid
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_kline_stream(streams, market_kind).boxed()
-                }),
-            Venue::Okex => self
-                .okex
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_kline_stream(streams, market_kind).boxed()
-                }),
-            Venue::Mexc => self
-                .mexc
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_kline_stream(streams, market_kind).boxed()
-                }),
         }
     }
 
@@ -192,30 +144,6 @@ impl AdapterHandles {
         match config.exchange.venue() {
             Venue::Binance => self
                 .binance
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_trade_stream(streams, market_kind).boxed()
-                }),
-            Venue::Bybit => self
-                .bybit
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_trade_stream(streams, market_kind).boxed()
-                }),
-            Venue::Hyperliquid => self
-                .hyperliquid
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_trade_stream(streams, market_kind).boxed()
-                }),
-            Venue::Okex => self
-                .okex
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle.connect_trade_stream(streams, market_kind).boxed()
-                }),
-            Venue::Mexc => self
-                .mexc
                 .clone()
                 .map_or_else(missing_venue_stream, |handle| {
                     handle.connect_trade_stream(streams, market_kind).boxed()
@@ -245,47 +173,11 @@ impl AdapterHandles {
                         .connect_depth_stream(ticker_info, depth_aggr, push_freq)
                         .boxed()
                 }),
-            Venue::Bybit => self
-                .bybit
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle
-                        .connect_depth_stream(ticker_info, depth_aggr, push_freq)
-                        .boxed()
-                }),
-            Venue::Hyperliquid => {
-                self.hyperliquid
-                    .clone()
-                    .map_or_else(missing_venue_stream, |handle| {
-                        handle
-                            .connect_depth_stream(ticker_info, depth_aggr, push_freq)
-                            .boxed()
-                    })
-            }
-            Venue::Okex => self
-                .okex
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle
-                        .connect_depth_stream(ticker_info, depth_aggr, push_freq)
-                        .boxed()
-                }),
-            Venue::Mexc => self
-                .mexc
-                .clone()
-                .map_or_else(missing_venue_stream, |handle| {
-                    handle
-                        .connect_depth_stream(ticker_info, depth_aggr, push_freq)
-                        .boxed()
-                }),
         }
     }
 
     /// Returns a map of tickers to their [`TickerInfo`].
     /// If metadata for a ticker can't be fetched/parsed expectedly, it will still be included in the map as `None`.
-    ///
-    /// `Binance`, `Bybit`, and `Hyperliquid` are fetched per market, while
-    /// `Okex` and `Mexc` handle market branching internally due to combined perps endpoints.
     pub async fn fetch_ticker_metadata(
         &self,
         venue: Venue,
@@ -307,49 +199,10 @@ impl AdapterHandles {
                 }
                 Ok(out)
             }
-            Venue::Bybit => {
-                let Some(handle) = self.bybit.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-
-                let mut out = HashMap::default();
-                for market in markets {
-                    out.extend(handle.fetch_ticker_metadata(*market).await?);
-                }
-                Ok(out)
-            }
-            Venue::Hyperliquid => {
-                let Some(handle) = self.hyperliquid.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-
-                let mut out = HashMap::default();
-                for market in markets {
-                    out.extend(handle.fetch_ticker_metadata(*market).await?);
-                }
-                Ok(out)
-            }
-            Venue::Okex => {
-                let Some(handle) = self.okex.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle.fetch_ticker_metadata(markets.to_vec()).await
-            }
-            Venue::Mexc => {
-                let Some(handle) = self.mexc.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle
-                    .fetch_ticker_metadata(mexc::MexcMarketScope::metadata(markets))
-                    .await
-            }
         }
     }
 
     /// Returns a map of tickers to their [`TickerStats`].
-    ///
-    /// `Binance`, `Bybit`, and `Hyperliquid` are fetched per market, while
-    /// `Okex` and `Mexc` handle market branching internally due to combined perps endpoints.
     pub async fn fetch_ticker_stats(
         &self,
         venue: Venue,
@@ -375,42 +228,6 @@ impl AdapterHandles {
                 }
                 Ok(out)
             }
-            Venue::Bybit => {
-                let Some(handle) = self.bybit.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-
-                let mut out = HashMap::default();
-                for market in markets {
-                    out.extend(handle.fetch_ticker_stats(*market).await?);
-                }
-                Ok(out)
-            }
-            Venue::Hyperliquid => {
-                let Some(handle) = self.hyperliquid.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-
-                let mut out = HashMap::default();
-                for market in markets {
-                    out.extend(handle.fetch_ticker_stats(*market).await?);
-                }
-                Ok(out)
-            }
-            Venue::Okex => {
-                let Some(handle) = self.okex.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle.fetch_ticker_stats(markets.to_vec()).await
-            }
-            Venue::Mexc => {
-                let Some(handle) = self.mexc.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle
-                    .fetch_ticker_stats(mexc::MexcMarketScope::stats(markets, contract_sizes))
-                    .await
-            }
         }
     }
 
@@ -425,30 +242,6 @@ impl AdapterHandles {
         match venue {
             Venue::Binance => {
                 let Some(handle) = self.binance.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle.fetch_klines(ticker_info, timeframe, range).await
-            }
-            Venue::Bybit => {
-                let Some(handle) = self.bybit.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle.fetch_klines(ticker_info, timeframe, range).await
-            }
-            Venue::Hyperliquid => {
-                let Some(handle) = self.hyperliquid.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle.fetch_klines(ticker_info, timeframe, range).await
-            }
-            Venue::Okex => {
-                let Some(handle) = self.okex.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle.fetch_klines(ticker_info, timeframe, range).await
-            }
-            Venue::Mexc => {
-                let Some(handle) = self.mexc.as_ref() else {
                     return Err(Self::missing_venue_error(venue));
                 };
                 handle.fetch_klines(ticker_info, timeframe, range).await
@@ -468,38 +261,6 @@ impl AdapterHandles {
         match venue {
             Venue::Binance => {
                 let Some(handle) = self.binance.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle
-                    .fetch_klines_page(ticker_info, timeframe, from, to)
-                    .await
-            }
-            Venue::Bybit => {
-                let Some(handle) = self.bybit.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle
-                    .fetch_klines_page(ticker_info, timeframe, from, to)
-                    .await
-            }
-            Venue::Hyperliquid => {
-                let Some(handle) = self.hyperliquid.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle
-                    .fetch_klines_page(ticker_info, timeframe, from, to)
-                    .await
-            }
-            Venue::Okex => {
-                let Some(handle) = self.okex.as_ref() else {
-                    return Err(Self::missing_venue_error(venue));
-                };
-                handle
-                    .fetch_klines_page(ticker_info, timeframe, from, to)
-                    .await
-            }
-            Venue::Mexc => {
-                let Some(handle) = self.mexc.as_ref() else {
                     return Err(Self::missing_venue_error(venue));
                 };
                 handle
@@ -526,23 +287,7 @@ impl AdapterHandles {
                     .fetch_open_interest(ticker_info, timeframe, range)
                     .await
             }
-            Exchange::BybitLinear | Exchange::BybitInverse => {
-                let Some(handle) = self.bybit.as_ref() else {
-                    return Err(Self::missing_venue_error(exchange.venue()));
-                };
-                handle
-                    .fetch_open_interest(ticker_info, timeframe, range)
-                    .await
-            }
-            Exchange::OkexLinear | Exchange::OkexInverse => {
-                let Some(handle) = self.okex.as_ref() else {
-                    return Err(Self::missing_venue_error(exchange.venue()));
-                };
-                handle
-                    .fetch_open_interest(ticker_info, timeframe, range)
-                    .await
-            }
-            _ => Err(AdapterError::InvalidRequest(format!(
+            Exchange::BinanceSpot => Err(AdapterError::InvalidRequest(format!(
                 "Open interest data not available for {exchange}"
             ))),
         }
@@ -563,9 +308,6 @@ impl AdapterHandles {
                 };
                 handle.fetch_trades(ticker_info, from_time, data_path).await
             }
-            _ => Err(AdapterError::InvalidRequest(format!(
-                "Trade fetch not available for {exchange}"
-            ))),
         }
     }
 }

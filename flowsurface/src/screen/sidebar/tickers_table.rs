@@ -59,11 +59,8 @@ const EXCHANGE_UNAVAILABLE_TOOLTIP: &str = "Metadata unavailable.\nCheck logs fo
 
 fn available_markets(venue: Venue) -> &'static [MarketKind] {
     match venue {
-        Venue::Binance | Venue::Bybit | Venue::Okex => &MarketKind::ALL,
-        Venue::Hyperliquid => &[MarketKind::Spot, MarketKind::LinearPerps],
-        // Skip metadata fetch for Mexc spot as it requires protobuf for websocket
-        // TODO: include after protobuf implementation and Mexc spot markets ready to stream
-        Venue::Mexc => &[MarketKind::LinearPerps, MarketKind::InversePerps],
+        // [CUSTOM: binance-usdt-perps-only]
+        Venue::Binance => &[MarketKind::LinearPerps],
     }
 }
 
@@ -786,9 +783,7 @@ impl TickersTable {
             )
         });
 
-        let spot_market_button = self.market_filter_btn("Spot", MarketKind::Spot);
         let linear_markets_btn = self.market_filter_btn("Linear", MarketKind::LinearPerps);
-        let inverse_markets_btn = self.market_filter_btn("Inverse", MarketKind::InversePerps);
 
         let exchange_filters = {
             let mut col = column![];
@@ -817,12 +812,8 @@ impl TickersTable {
             ]
             .spacing(4),
             rule::horizontal(1.0).style(style::split_ruler),
-            row![
-                spot_market_button.width(Length::Fill),
-                linear_markets_btn.width(Length::Fill),
-                inverse_markets_btn.width(Length::Fill),
-            ]
-            .spacing(4),
+            // [CUSTOM: binance-usdt-perps-only]
+            row![linear_markets_btn.width(Length::Fill)].spacing(4),
             rule::horizontal(1.0).style(style::split_ruler),
             exchange_filters,
             rule::horizontal(1.0).style(style::split_ruler),
@@ -1656,7 +1647,7 @@ fn fetch_ticker_stats_task(
     tickers_info: &FxHashMap<Ticker, Option<TickerInfo>>,
 ) -> Task<Message> {
     let markets_to_fetch = available_markets(venue);
-    let requires_contract_sizes = matches!(venue, Venue::Binance | Venue::Mexc);
+    let requires_contract_sizes = matches!(venue, Venue::Binance);
 
     let contract_sizes = requires_contract_sizes.then(|| {
         tickers_info

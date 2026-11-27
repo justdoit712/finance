@@ -1,5 +1,4 @@
 pub mod aggr;
-pub mod audio;
 pub mod chart;
 pub mod config;
 pub mod layout;
@@ -14,7 +13,6 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-pub use audio::AudioStream;
 pub use chart::kline::indicators::{
     IndicatorCatalogPaths, initialize_indicator_catalog, initialize_indicator_catalog_with_paths,
 };

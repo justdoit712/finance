@@ -316,15 +316,7 @@ pub fn supports_open_interest(ticker_info: TickerInfo, timeframe: Timeframe) -> 
 }
 
 pub fn supports_open_interest_exchange(exchange: Exchange) -> bool {
-    matches!(
-        exchange,
-        Exchange::BinanceLinear
-            | Exchange::BinanceInverse
-            | Exchange::BybitLinear
-            | Exchange::BybitInverse
-            | Exchange::OkexLinear
-            | Exchange::OkexInverse
-    )
+    matches!(exchange, Exchange::BinanceLinear | Exchange::BinanceInverse)
 }
 
 pub fn supports_open_interest_timeframe(timeframe: Timeframe) -> bool {

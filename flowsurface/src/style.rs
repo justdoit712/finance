@@ -73,10 +73,6 @@ pub enum Icon {
     Cog = 59408,
     Link = 59399,
     BinanceLogo = 59401,
-    BybitLogo = 59400,
-    HyperliquidLogo = 59411,
-    OkexLogo = 59423,
-    MexcLogo = 59425,
     Search = 59394,
     Sort = 61660,
     SortDesc = 61661,
@@ -90,9 +86,6 @@ pub enum Icon {
     Edit = 59409,
     Checkmark = 59410,
     Clone = 61637,
-    SpeakerOff = 59412,
-    SpeakerLow = 59414,
-    SpeakerHigh = 59413,
     DragHandle = 59415,
     Folder = 61716,
     ExternalLink = 61772,
@@ -132,11 +125,7 @@ pub fn icon_text<'a>(icon: Icon, size: u16) -> Text<'a, Theme, Renderer> {
 
 pub fn venue_icon(venue: exchange::adapter::Venue) -> Icon {
     match venue {
-        exchange::adapter::Venue::Bybit => Icon::BybitLogo,
         exchange::adapter::Venue::Binance => Icon::BinanceLogo,
-        exchange::adapter::Venue::Hyperliquid => Icon::HyperliquidLogo,
-        exchange::adapter::Venue::Okex => Icon::OkexLogo,
-        exchange::adapter::Venue::Mexc => Icon::MexcLogo,
     }
 }
 

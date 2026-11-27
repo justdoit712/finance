@@ -37,12 +37,17 @@ def _portable_exe_path() -> Path:
     return base / "CryptoQuant" / "flowsurface" / "flowsurface.exe"
 
 
-def _flowsurface_data_dir() -> Path:
+def _flowsurface_data_dir(profile: str | None = None) -> Path:
     override = os.environ.get("FLOWSURFACE_DATA_PATH", "").strip()
-    if override:
+    if override and not profile:
         return Path(override)
     appdata = os.environ.get("APPDATA", "").strip()
     base = Path(appdata) if appdata else (Path.home() / "AppData" / "Roaming")
+    if profile:
+        safe = "".join(ch for ch in profile.strip() if ch.isalnum() or ch in ("-", "_"))
+        if not safe:
+            raise ValueError(f"无效的实例名称: {profile!r}")
+        return base / f"flowsurface-{safe}"
     return base / "flowsurface"
 
 
@@ -97,6 +102,31 @@ def ensure_flowsurface_config(data_dir: Path | None = None) -> Path:
 
     if "timezone" not in data:
         data["timezone"] = "Local"
+        changed = True
+
+    if "cache_market_metadata" not in data:
+        data["cache_market_metadata"] = True
+        changed = True
+
+    sidebar = data.get("sidebar")
+    if isinstance(sidebar, dict):
+        tt = sidebar.get("tickers_table")
+        if isinstance(tt, dict):
+            if tt.get("selected_exchanges") != ["Binance"]:
+                tt["selected_exchanges"] = ["Binance"]
+                changed = True
+            if tt.get("selected_markets") != ["LinearPerps"]:
+                tt["selected_markets"] = ["LinearPerps"]
+                changed = True
+
+    mw = data.get("main_window")
+    if isinstance(mw, dict) and (
+        (mw.get("width") or 0) < 200
+        or (mw.get("height") or 0) < 200
+        or (mw.get("pos_x") or 0) <= -10000
+        or (mw.get("pos_y") or 0) <= -10000
+    ):
+        data["main_window"] = {"width": 1400.0, "height": 900.0, "pos_x": 100.0, "pos_y": 80.0}
         changed = True
 
     net = data.get("network")
@@ -229,26 +259,37 @@ def build_from_source() -> Path:
     return LOCAL_RELEASE_EXE
 
 
-def create_shortcut() -> None:
+def create_shortcut(profile: str | None = None) -> None:
     if sys.platform != "win32":
         print("非 Windows 系统跳过 .lnk 快捷方式创建。")
         return
     if not LAUNCH_BAT.exists():
         raise FileNotFoundError(f"未找到启动脚本: {LAUNCH_BAT}")
     icon_arg = f"{ICON_PATH},0" if ICON_PATH.exists() else ""
+    if profile:
+        safe = "".join(ch for ch in profile.strip() if ch.isalnum() or ch in ("-", "_"))
+        if not safe:
+            raise ValueError(f"无效的实例名称: {profile!r}")
+        shortcut_path = ROOT_DIR / f"客户端{safe}.lnk"
+        cmd_args = f'/c ""{LAUNCH_BAT}" --profile {safe}"'
+        desc = f"客户端 {safe} (Flowsurface 独立多开实例)"
+    else:
+        shortcut_path = SHORTCUT_PATH
+        cmd_args = f'/c ""{LAUNCH_BAT}""'
+        desc = "客户端 (Flowsurface 实时行情终端)"
     ps = (
         "$ws = New-Object -ComObject WScript.Shell; "
-        f"$sc = $ws.CreateShortcut('{SHORTCUT_PATH}'); "
+        f"$sc = $ws.CreateShortcut('{shortcut_path}'); "
         "$sc.TargetPath = 'cmd.exe'; "
-        f"$sc.Arguments = '/c \"\"\"{LAUNCH_BAT}\"\"\"'; "
+        f"$sc.Arguments = '{cmd_args}'; "
         f"$sc.WorkingDirectory = '{ROOT_DIR}'; "
         "$sc.WindowStyle = 7; "
-        "$sc.Description = '客户端 (Flowsurface 实时行情终端)'; "
+        f"$sc.Description = '{desc}'; "
         + (f"$sc.IconLocation = '{icon_arg}'; " if icon_arg else "")
         + "$sc.Save()"
     )
     subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
-    print(f"✓ 已更新快捷方式: {SHORTCUT_PATH}")
+    print(f"✓ 已更新快捷方式: {shortcut_path}")
 
 
 def launch_flowsurface(kind: str, target: str) -> None:
@@ -276,10 +317,13 @@ def main() -> None:
     parser.add_argument("--build", action="store_true", help="从本地 flowsurface/ Rust 源码编译 release 版")
     parser.add_argument("--install", action="store_true", help="仅检查/安装官方签名包并初始化配置")
     parser.add_argument("--no-launch", action="store_true", help="只准备配置与安装，不拉起窗口")
-    parser.add_argument("--create-shortcut", action="store_true", help="更新根目录 客户端.lnk 快捷方式")
+    parser.add_argument("--create-shortcut", action="store_true", help="更新根目录快捷方式（配合 --profile 可生成独立多开快捷方式）")
+    parser.add_argument("--profile", type=str, default=None, help="独立多开实例名（如 2 / 3），自动隔离数据目录与布局配置")
     args = parser.parse_args()
 
-    state_file = ensure_flowsurface_config()
+    data_dir = _flowsurface_data_dir(args.profile)
+    os.environ["FLOWSURFACE_DATA_PATH"] = str(data_dir)
+    state_file = ensure_flowsurface_config(data_dir)
     print(f"→ 配置文件就绪: {state_file}")
 
     if args.build:
@@ -289,7 +333,7 @@ def main() -> None:
         kind, target = ensure_flowsurface_installed(force_reinstall=args.install and not (_find_installed_exe() or _find_appx_pfn()))
 
     if args.create_shortcut:
-        create_shortcut()
+        create_shortcut(args.profile)
 
     if not args.no_launch:
         launch_flowsurface(kind, target)

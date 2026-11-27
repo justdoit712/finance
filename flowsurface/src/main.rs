@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod audio;
 mod connector;
 mod deferred;
 mod layout;
@@ -22,7 +21,6 @@ use layout::{LayoutId, configuration};
 use modal::dashboard_modal;
 use modal::{
     LayoutManager, ThemeEditor,
-    audio::AudioStream,
     network_editor::{self, NetworkEditor},
 };
 use notify::Notifications;
@@ -92,7 +90,6 @@ struct Flowsurface {
     theme_editor: ThemeEditor,
     network_editor: NetworkEditor,
     data_sources: Arc<DataSources>,
-    audio_stream: AudioStream,
     settings: modal::settings::Settings,
     theme: ThemeState,
     notifications: Notifications,
@@ -124,7 +121,6 @@ enum Message {
     NetworkEditor(modal::network_editor::Message),
     Layouts(modal::layout_manager::Message),
     SharedChartResources(manifest::Message),
-    AudioStream(modal::audio::Message),
 }
 
 impl Flowsurface {
@@ -150,8 +146,6 @@ impl Flowsurface {
             data_sources.exchange.clone(),
         );
 
-        let (audio_stream, audio_init_err) = AudioStream::new(saved_state.audio_cfg);
-
         let settings = modal::settings::Settings::new(
             saved_state.timezone,
             saved_state.scale_factor,
@@ -165,7 +159,6 @@ impl Flowsurface {
             layout_manager: saved_state.layout_manager,
             theme_editor: ThemeEditor::new(saved_state.custom_theme),
             window_scale_factors: window::WindowScaleFactors::new(main_window_id),
-            audio_stream,
             sidebar,
             data_sources,
             settings,
@@ -179,12 +172,6 @@ impl Flowsurface {
             state.notifications.push(Toast::warn(format!(
                 "Indicator source quarantined: {diagnostic}"
             )));
-        }
-
-        if let Some(err) = audio_init_err {
-            state
-                .notifications
-                .push(Toast::error(format!("Audio disabled: {err}")));
         }
 
         if state.layout_manager.layouts.is_empty() {
@@ -254,10 +241,6 @@ impl Flowsurface {
                             update_t,
                             main_window_id,
                         );
-
-                        if let Some(msg) = self.audio_stream.try_play_sound(&stream, &buffer) {
-                            self.notifications.push(Toast::error(msg));
-                        }
 
                         return self.map_dashboard_task(task, None);
                     }
@@ -514,21 +497,6 @@ impl Flowsurface {
                     None => {}
                 }
             }
-            Message::AudioStream(message) => {
-                if let Some(event) = self.audio_stream.update(message) {
-                    match event {
-                        modal::audio::UpdateEvent::RetryFailed(err) => {
-                            self.notifications
-                                .push(Toast::error(format!("Audio still unavailable: {err}")));
-                        }
-                        modal::audio::UpdateEvent::RetrySucceeded => {
-                            self.notifications.push(Toast::info(
-                                "Audio output re-initialized successfully".to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
             Message::ThemeEditor(msg) => {
                 let action = self.theme_editor.update(msg, self.theme.current());
 
@@ -685,7 +653,7 @@ impl Flowsurface {
         let content = if id == self.main_window.id {
             let sidebar_view = self
                 .sidebar
-                .view(self.audio_stream.volume())
+                .view()
                 .map(Message::Sidebar);
             let dashboard_view = dashboard
                 .view(
@@ -1095,25 +1063,6 @@ impl Flowsurface {
                     align_x,
                 )
             }
-            sidebar::Menu::Audio => {
-                let (align_x, padding) = match sidebar_pos {
-                    sidebar::Position::Left => (Alignment::Start, padding::left(44).top(76)),
-                    sidebar::Position::Right => (Alignment::End, padding::right(44).top(76)),
-                };
-
-                let trade_streams_list = dashboard.streams.trade_streams(None);
-
-                dashboard_modal(
-                    base,
-                    self.audio_stream
-                        .view(trade_streams_list)
-                        .map(Message::AudioStream),
-                    Message::Sidebar(screen::sidebar::Message::ToggleSidebarMenu(None)),
-                    padding,
-                    Alignment::Start,
-                    align_x,
-                )
-            }
             sidebar::Menu::ThemeEditor => {
                 let (align_x, padding) = match sidebar_pos {
                     sidebar::Position::Left => (Alignment::Start, padding::left(44).bottom(4)),
@@ -1189,8 +1138,6 @@ impl Flowsurface {
             .find(|(id, _)| **id == self.main_window.id)
             .map(|(_, spec)| *spec);
 
-        let audio_cfg = data::AudioStream::from(&self.audio_stream);
-
         let state = data::State::from_parts(
             layouts,
             self.theme.data_theme(),
@@ -1199,7 +1146,6 @@ impl Flowsurface {
             self.settings.timezone,
             self.sidebar.state.clone(),
             self.settings.scale_factor,
-            audio_cfg,
             self.network.wanted().for_persistence(),
             *self.settings.volume_size_unit.wanted(),
             self.sidebar.cache_enabled(),

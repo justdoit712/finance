@@ -70,7 +70,6 @@ ring = "0.17.14"
 fern = "0.7.1"
 reqwest.workspace = true
 tokio.workspace = true
-rodio = { version = "0.22.2", default-features = false, features = [ "playback", "wav" ]}
 
 bytemuck = "1.25.0"
 iced_wgpu = "0.14.0"

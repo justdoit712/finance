@@ -38,9 +38,8 @@ impl HeatmapIndicator {
         }
     }
 
-    pub fn unsupported_reason(self, venue: Venue) -> Option<&'static str> {
-        (self == Self::Spread && venue == Venue::Hyperliquid)
-            .then_some("Spread unavailable.\nDepth prices may be server-aggregated.")
+    pub fn unsupported_reason(self, _venue: Venue) -> Option<&'static str> {
+        None
     }
 }
 

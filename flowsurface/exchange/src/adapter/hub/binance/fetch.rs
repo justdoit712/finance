@@ -220,10 +220,9 @@ pub(super) async fn fetch_ticker_metadata(
         {
             continue;
         }
+        // [CUSTOM: binance-usdt-perps-only]
         if let Some(quote_asset) = item["quoteAsset"].as_str()
             && quote_asset != "USDT"
-            && quote_asset != "USDC"
-            && quote_asset != "USD"
         {
             continue;
         }
@@ -293,6 +292,11 @@ pub(super) async fn fetch_ticker_stats(
             .ok_or_else(|| AdapterError::ParseError("Symbol not found".to_string()))?;
 
         if !exchange.is_symbol_supported(symbol, false) {
+            continue;
+        }
+
+        // [CUSTOM: binance-usdt-perps-only]
+        if market == MarketKind::LinearPerps && !symbol.ends_with("USDT") {
             continue;
         }
 

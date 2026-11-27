@@ -3,7 +3,7 @@ use super::sidebar::Sidebar;
 use super::timezone::UserTimezone;
 use crate::config::network::Network;
 use crate::layout::WindowSpec;
-use crate::{AudioStream, Layout, Theme};
+use crate::{Layout, Theme};
 
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +42,6 @@ pub struct State {
     pub timezone: UserTimezone,
     pub sidebar: Sidebar,
     pub scale_factor: ScaleFactor,
-    pub audio_cfg: AudioStream,
     pub network: Network,
     pub size_in_quote_ccy: exchange::SizeUnit,
     pub cache_market_metadata: bool,
@@ -59,7 +58,6 @@ impl State {
         timezone: UserTimezone,
         sidebar: Sidebar,
         scale_factor: ScaleFactor,
-        audio_cfg: AudioStream,
         network: Network,
         volume_size_unit: exchange::SizeUnit,
         cache_market_metadata: bool,
@@ -73,7 +71,6 @@ impl State {
             timezone,
             sidebar,
             scale_factor,
-            audio_cfg,
             network,
             size_in_quote_ccy: volume_size_unit,
             cache_market_metadata,
