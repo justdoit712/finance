@@ -58,11 +58,6 @@ impl FixedWindowBucket {
             .saturating_sub(Instant::now().duration_since(self.last_refill));
         Some(wait_time)
     }
-
-    pub fn consume_tokens(&mut self, tokens: usize) {
-        self.refill();
-        self.available_tokens -= tokens.min(self.available_tokens);
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -144,61 +139,6 @@ impl DynamicBucket {
             None => (None, None),
             Some(wait_time) => (Some(wait_time), Some(DynamicLimitReason::FixedWindowRate)),
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct FixedWindowRateLimiterConfig {
-    pub limit: usize,
-    pub refill_rate: Duration,
-    pub limiter_buffer_pct: f32,
-    pub exit_status: reqwest::StatusCode,
-}
-
-impl FixedWindowRateLimiterConfig {
-    pub fn new(
-        limit: usize,
-        refill_rate: Duration,
-        limiter_buffer_pct: f32,
-        exit_status: reqwest::StatusCode,
-    ) -> Self {
-        Self {
-            limit,
-            refill_rate,
-            limiter_buffer_pct,
-            exit_status,
-        }
-    }
-}
-
-pub struct FixedWindowRateLimiter {
-    bucket: FixedWindowBucket,
-    exit_status: reqwest::StatusCode,
-}
-
-impl FixedWindowRateLimiter {
-    pub fn new(config: FixedWindowRateLimiterConfig) -> Self {
-        let keep_ratio = (1.0 - config.limiter_buffer_pct).clamp(0.0, 1.0);
-        let effective_limit = (config.limit as f32 * keep_ratio) as usize;
-
-        Self {
-            bucket: FixedWindowBucket::new(effective_limit, config.refill_rate),
-            exit_status: config.exit_status,
-        }
-    }
-}
-
-impl RateLimiter for FixedWindowRateLimiter {
-    fn prepare_request(&mut self, weight: usize) -> Option<Duration> {
-        self.bucket.calculate_wait_time(weight)
-    }
-
-    fn update_from_response(&mut self, _response: &reqwest::Response, weight: usize) {
-        self.bucket.consume_tokens(weight);
-    }
-
-    fn should_exit_on_response(&self, response: &reqwest::Response) -> bool {
-        response.status() == self.exit_status
     }
 }
 

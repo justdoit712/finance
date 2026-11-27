@@ -5,7 +5,7 @@ use crate::{Ticker, TickerInfo, Trade, UnixMs};
 
 use bytes::Bytes;
 use fastwebsockets::{
-    FragmentCollectorRead, Frame, OpCode, Payload, WebSocket, WebSocketError, WebSocketWrite,
+    FragmentCollectorRead, Frame, OpCode, Payload, WebSocket, WebSocketWrite,
 };
 use http_body_util::Empty;
 use hyper::{
@@ -30,7 +30,6 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-const HEARTBEAT_SEND_FAILED_REASON: &str = "Failed to send heartbeat ping";
 const HEARTBEAT_PONG_FAILED_REASON: &str = "Failed to reply pong";
 const HEARTBEAT_TIMEOUT_REASON: &str = "Heartbeat timeout (no websocket activity)";
 
@@ -351,42 +350,13 @@ impl WsSession {
     }
 }
 
-/// Wire representation for an outbound heartbeat payload.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum PingPayload {
-    /// An application-level text message.
-    Text(&'static [u8]),
-    /// A WebSocket control Ping frame.
-    OpCode(&'static [u8]),
-}
-
 /// Transport-level keepalive strategy for a WebSocket adapter.
 ///
 /// Activity is recorded for every complete inbound frame, including control
-/// frames. The policy determines when the connection sends a heartbeat and
-/// when a lack of inbound activity is treated as a dead connection.
+/// frames. The policy closes the connection when no complete inbound frame
+/// arrives within `silence_timeout`.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum HeartbeatPolicy {
-    /// Send an application or control ping at a fixed cadence.
-    ///
-    /// The next ping is scheduled after the previous write succeeds. The
-    /// connection is closed when no complete inbound frame arrives within
-    /// `silence_timeout`.
-    PeriodicClientPing {
-        ping: PingPayload,
-        every: Duration,
-        silence_timeout: Duration,
-    },
-    /// Send one application-level ping after inbound traffic has been idle.
-    ///
-    /// A complete inbound frame returns the policy to idle monitoring. After
-    /// a ping is written, the connection waits `response_timeout` for any
-    /// complete inbound frame before closing.
-    PingAfterIdle {
-        ping: PingPayload,
-        idle_for: Duration,
-        response_timeout: Duration,
-    },
     /// Rely on protocol-level pings sent by the server.
     ///
     /// The transport still replies to incoming WebSocket Ping frames, but it
@@ -395,49 +365,6 @@ pub(super) enum HeartbeatPolicy {
 }
 
 impl HeartbeatPolicy {
-    /// Creates a [`PeriodicClientPing`](HeartbeatPolicy::PeriodicClientPing) policy
-    /// that sends an application-level text ping.
-    pub(super) const fn periodic_text(
-        payload: &'static [u8],
-        every: Duration,
-        silence_timeout: Duration,
-    ) -> Self {
-        Self::PeriodicClientPing {
-            ping: PingPayload::Text(payload),
-            every,
-            silence_timeout,
-        }
-    }
-
-    /// Creates a [`PeriodicClientPing`](HeartbeatPolicy::PeriodicClientPing) policy
-    /// that sends a WebSocket control Ping frame.
-    #[allow(dead_code)]
-    pub(crate) const fn periodic_opcode(
-        payload: &'static [u8],
-        every: Duration,
-        silence_timeout: Duration,
-    ) -> Self {
-        Self::PeriodicClientPing {
-            ping: PingPayload::OpCode(payload),
-            every,
-            silence_timeout,
-        }
-    }
-
-    /// Creates a [`PingAfterIdle`](HeartbeatPolicy::PingAfterIdle) policy
-    /// that sends an application-level text ping.
-    pub(super) const fn ping_after_idle_text(
-        payload: &'static [u8],
-        idle_for: Duration,
-        response_timeout: Duration,
-    ) -> Self {
-        Self::PingAfterIdle {
-            ping: PingPayload::Text(payload),
-            idle_for,
-            response_timeout,
-        }
-    }
-
     /// Creates a [`ServerDriven`](HeartbeatPolicy::ServerDriven) policy
     /// that only observes server-driven activity.
     pub(super) const fn server_driven(silence_timeout: Duration) -> Self {
@@ -445,151 +372,30 @@ impl HeartbeatPolicy {
     }
 }
 
-enum HeartbeatState {
-    Periodic { next_ping: Instant },
-    IdleMonitoring,
-    IdleAwaitingResponse { deadline: Instant },
-    ServerDriven,
-}
-
-enum HeartbeatAction {
-    SendPing(PingPayload),
-    Timeout,
-    Wait,
-}
-
 struct WsHeartbeat {
-    policy: HeartbeatPolicy,
+    silence_timeout: Duration,
     last_activity: Instant,
-    state: HeartbeatState,
 }
 
 impl WsHeartbeat {
     fn new(policy: HeartbeatPolicy, now: Instant) -> Self {
-        let state = match policy {
-            HeartbeatPolicy::PeriodicClientPing { every, .. } => HeartbeatState::Periodic {
-                next_ping: now + every,
-            },
-            HeartbeatPolicy::PingAfterIdle { .. } => HeartbeatState::IdleMonitoring,
-            HeartbeatPolicy::ServerDriven { .. } => HeartbeatState::ServerDriven,
-        };
-
+        let HeartbeatPolicy::ServerDriven { silence_timeout } = policy;
         Self {
-            policy,
+            silence_timeout,
             last_activity: now,
-            state,
         }
     }
 
     fn next_deadline(&self) -> Instant {
-        match (self.policy, &self.state) {
-            (
-                HeartbeatPolicy::PeriodicClientPing {
-                    silence_timeout, ..
-                },
-                HeartbeatState::Periodic { next_ping },
-            ) => (self.last_activity + silence_timeout).min(*next_ping),
-            (HeartbeatPolicy::PingAfterIdle { idle_for, .. }, HeartbeatState::IdleMonitoring) => {
-                self.last_activity + idle_for
-            }
-            (
-                HeartbeatPolicy::PingAfterIdle { .. },
-                HeartbeatState::IdleAwaitingResponse { deadline },
-            ) => *deadline,
-            (HeartbeatPolicy::ServerDriven { silence_timeout }, HeartbeatState::ServerDriven) => {
-                self.last_activity + silence_timeout
-            }
-            (
-                HeartbeatPolicy::PeriodicClientPing {
-                    silence_timeout, ..
-                },
-                _,
-            ) => self.last_activity + silence_timeout,
-            (HeartbeatPolicy::PingAfterIdle { idle_for, .. }, _) => self.last_activity + idle_for,
-            (HeartbeatPolicy::ServerDriven { silence_timeout }, _) => {
-                self.last_activity + silence_timeout
-            }
-        }
+        self.last_activity + self.silence_timeout
     }
 
-    fn deadline_action(&self, now: Instant) -> HeartbeatAction {
-        match (self.policy, &self.state) {
-            (
-                HeartbeatPolicy::PeriodicClientPing {
-                    ping,
-                    silence_timeout,
-                    ..
-                },
-                HeartbeatState::Periodic { next_ping },
-            ) => {
-                if now >= self.last_activity + silence_timeout {
-                    HeartbeatAction::Timeout
-                } else if now >= *next_ping {
-                    HeartbeatAction::SendPing(ping)
-                } else {
-                    HeartbeatAction::Wait
-                }
-            }
-            (
-                HeartbeatPolicy::PingAfterIdle { ping, idle_for, .. },
-                HeartbeatState::IdleMonitoring,
-            ) => {
-                if now >= self.last_activity + idle_for {
-                    HeartbeatAction::SendPing(ping)
-                } else {
-                    HeartbeatAction::Wait
-                }
-            }
-            (
-                HeartbeatPolicy::PingAfterIdle { .. },
-                HeartbeatState::IdleAwaitingResponse { deadline },
-            ) => {
-                if now >= *deadline {
-                    HeartbeatAction::Timeout
-                } else {
-                    HeartbeatAction::Wait
-                }
-            }
-            (HeartbeatPolicy::ServerDriven { silence_timeout }, HeartbeatState::ServerDriven) => {
-                if now >= self.last_activity + silence_timeout {
-                    HeartbeatAction::Timeout
-                } else {
-                    HeartbeatAction::Wait
-                }
-            }
-            _ => HeartbeatAction::Wait,
-        }
+    fn is_timed_out(&self, now: Instant) -> bool {
+        now >= self.next_deadline()
     }
 
     fn mark_activity(&mut self, now: Instant) {
         self.last_activity = now;
-        if matches!(self.state, HeartbeatState::IdleAwaitingResponse { .. }) {
-            self.state = HeartbeatState::IdleMonitoring;
-        }
-    }
-
-    fn record_ping_sent(&mut self, now: Instant) {
-        match (self.policy, &self.state) {
-            (
-                HeartbeatPolicy::PeriodicClientPing { every, .. },
-                HeartbeatState::Periodic { .. },
-            ) => {
-                self.state = HeartbeatState::Periodic {
-                    next_ping: now + every,
-                };
-            }
-            (
-                HeartbeatPolicy::PingAfterIdle {
-                    response_timeout, ..
-                },
-                HeartbeatState::IdleMonitoring,
-            ) => {
-                self.state = HeartbeatState::IdleAwaitingResponse {
-                    deadline: now + response_timeout,
-                };
-            }
-            _ => {}
-        }
     }
 }
 
@@ -639,8 +445,8 @@ where
                     biased;
                     result = &mut read_future => break Ok(result),
                     _ = tokio::time::sleep_until(deadline) => {
-                        if let Err(reason) = apply_heartbeat_action(&mut heartbeat, &mut writer).await {
-                            break Err(reason);
+                        if heartbeat.is_timed_out(Instant::now()) {
+                            break Err(HEARTBEAT_TIMEOUT_REASON);
                         }
                     }
                 }
@@ -696,49 +502,12 @@ where
                 break;
             }
 
-            if let Err(reason) = apply_heartbeat_action(&mut heartbeat, &mut writer).await {
-                let _ = frame_tx.send(Err(reason.to_string()));
+            if heartbeat.is_timed_out(Instant::now()) {
+                let _ = frame_tx.send(Err(HEARTBEAT_TIMEOUT_REASON.to_string()));
                 break;
             }
         }
     }
-}
-
-async fn apply_heartbeat_action<W>(
-    heartbeat: &mut WsHeartbeat,
-    writer: &mut WebSocketWrite<W>,
-) -> Result<(), &'static str>
-where
-    W: AsyncWrite + Unpin,
-{
-    match heartbeat.deadline_action(Instant::now()) {
-        HeartbeatAction::SendPing(ping) => {
-            write_heartbeat_ping(writer, ping)
-                .await
-                .map_err(|_| HEARTBEAT_SEND_FAILED_REASON)?;
-            heartbeat.record_ping_sent(Instant::now());
-            Ok(())
-        }
-        HeartbeatAction::Timeout => Err(HEARTBEAT_TIMEOUT_REASON),
-        HeartbeatAction::Wait => Ok(()),
-    }
-}
-
-async fn write_heartbeat_ping<W>(
-    writer: &mut WebSocketWrite<W>,
-    ping_payload: PingPayload,
-) -> Result<(), WebSocketError>
-where
-    W: AsyncWrite + Unpin,
-{
-    let frame = match ping_payload {
-        PingPayload::Text(payload) => Frame::text(Payload::Borrowed(payload)),
-        PingPayload::OpCode(payload) => {
-            Frame::new(true, OpCode::Ping, None, Payload::Borrowed(payload))
-        }
-    };
-
-    writer.write_frame(frame).await
 }
 
 fn format_close_frame_reason(payload: &[u8]) -> String {
@@ -787,10 +556,6 @@ impl WsTransport {
         WsConnection::new(reader, writer, heartbeat_policy, frame_tx)
             .run()
             .await;
-    }
-
-    pub(super) async fn write_frame(&mut self, frame: Frame<'_>) -> Result<(), WebSocketError> {
-        self.0.write_frame(frame).await
     }
 
     pub(super) async fn establish(
