@@ -1,10 +1,10 @@
 {
   "symbol": "ETHUSDT",
-  "generated_at_utc": "2026-11-28T11:35:00.094946+00:00",
+  "generated_at_utc": "2026-11-28T11:48:31.702196+00:00",
   "anchor_timeframe": "1h",
   "diagnosis": {
     "regime": "trending",
-    "wick_risk": "high",
+    "wick_risk": "medium",
     "session_pattern": "24x7_uniform",
     "session_label_zh": "7×24 全天候均匀交投",
     "top_6h_volume_share": 0.395,
@@ -31,35 +31,33 @@
       8
     ],
     "recommended_families": [
-      "sweep_fade",
       "ema_defense_pullback",
-      "trend_breakout",
       "squeeze_ignition",
-      "climax_reversal"
+      "trend_breakout",
+      "climax_reversal",
+      "sweep_fade"
     ]
   },
   "whale_diagnosis": {
     "style_tags": [
-      "高频长影插针",
       "EMA200多头护盘记忆"
     ],
     "summary_lines_zh": [
-      "**插针扫损习性**：平均影线占比 `58.7%`（风险 `high`）；向下插针前低收回后 6 根反弹胜率 `49.6%`（125 次），向上诱多收回后回落胜率 `52.3%`（155 次）。",
-      "**突破真假诚实度**：20 根前高低点突破延续率 `39.1%` vs 4 根内诱多/诱空骗炮率 `32.4%`（放量突破延续 `40.8%` vs 缩量突破 `31.7%`）。",
+      "**插针扫损习性**：剧烈长针 K 线占比 `3.5%` / 平均影线 `58.7%`（风险 `medium`）；向下插针前低收回后 6 根反弹胜率 `49.6%`（125 次），向上诱多收回后回落胜率 `52.3%`（155 次）。",
+      "**突破真假诚实度**：20 根前高低点突破 6 根延续率 `41.8%` vs 6 根内跌回箱体骗炮率 `39.1%`（放量突破延续 `40.8%` vs 缩量突破 `46.3%`）。",
       "**主力均线记忆**：上升期回踩护盘表现最佳为 `EMA200`（6 根反弹胜率 `58.2%`）；下跌期反抽压制最明显为 `EMA200`（6 根回落胜率 `51.2%`）。",
-      "**吸筹点火与巨量意图**：布林缩口吸筹期占比 `33.7%`，缩口放量点火后 8 根顺势胜率 `40.2%`（平均波幅 `1.53 ATR`）；2.5 倍巨量长影线反转率 `53.6%`，巨量实体顺势延续率 `44.3%`，主动买盘占比 `49.7%`。",
+      "**吸筹点火与巨量意图**：布林缩口吸筹期占比 `33.7%`，缩口放量突破后 8 根顺势胜率 `44.6%`（平均波幅 `1.53 ATR`）；2.5 倍巨量长影线反转率 `53.6%`，巨量实体顺势延续率 `44.3%`，主动买盘占比 `49.7%`。",
       "**主力作息（北京时间）**：7×24 全天候均匀交投；成交最活跃时段 `22:00, 23:00, 21:00, 00:00`，长影插针高发时段 `19:00, 00:00, 22:00`。"
     ],
     "taboos_zh": [
-      "20 周期突破骗炮率 `32%`（缩量突破延续仅 `32%`），严禁无量追涨杀跌。",
-      "平均影线占比高达 `59%`，严禁把止损贴在前低/前高 1 倍 ATR 内；重点防备北京时间 `19:00, 00:00, 22:00` 插针。"
+      "严格遵守底层不追仓上限与止损冷静期，不与主力单边放量结构硬扛。"
     ],
     "recommended_playbooks": [
-      "sweep_fade",
       "ema_defense_pullback",
-      "trend_breakout",
       "squeeze_ignition",
-      "climax_reversal"
+      "trend_breakout",
+      "climax_reversal",
+      "sweep_fade"
     ],
     "best_support_ema": 200,
     "best_resistance_ema": 200
@@ -86,6 +84,8 @@
       "efficiency_ratio_20": 0.186,
       "wick_ratio_mean": 0.558,
       "extreme_wick_pct": 0.456,
+      "needle_bar_pct": 0.0295,
+      "atr_tail_ratio": 2.12,
       "tail_3sigma_pct": 0.0169,
       "taker_buy_ratio": 0.4972,
       "sweep_behavior": {
@@ -102,10 +102,10 @@
       },
       "breakout_honesty": {
         "breakout_count": 987,
-        "continuation_rate": 0.37,
-        "trap_rate": 0.38,
-        "high_vol_continuation_rate": 0.377,
-        "low_vol_continuation_rate": 0.344
+        "continuation_rate": 0.424,
+        "trap_rate": 0.442,
+        "high_vol_continuation_rate": 0.432,
+        "low_vol_continuation_rate": 0.394
       },
       "key_ema_memory": {
         "best_support_ema": 34,
@@ -147,9 +147,9 @@
       },
       "squeeze_accumulation": {
         "squeeze_share_pct": 33.2,
-        "ignition_count": 461,
-        "ignition_win_rate_8b": 0.469,
-        "ignition_avg_atr_move_8b": 1.86
+        "ignition_count": 363,
+        "ignition_win_rate_8b": 0.438,
+        "ignition_avg_atr_move_8b": 2.0
       },
       "volume_climax": {
         "climax_count": 1104,
@@ -180,6 +180,8 @@
       "efficiency_ratio_20": 0.188,
       "wick_ratio_mean": 0.587,
       "extreme_wick_pct": 0.498,
+      "needle_bar_pct": 0.0355,
+      "atr_tail_ratio": 1.82,
       "tail_3sigma_pct": 0.0171,
       "taker_buy_ratio": 0.4972,
       "sweep_behavior": {
@@ -196,10 +198,10 @@
       },
       "breakout_honesty": {
         "breakout_count": 225,
-        "continuation_rate": 0.391,
-        "trap_rate": 0.324,
+        "continuation_rate": 0.418,
+        "trap_rate": 0.391,
         "high_vol_continuation_rate": 0.408,
-        "low_vol_continuation_rate": 0.317
+        "low_vol_continuation_rate": 0.463
       },
       "key_ema_memory": {
         "best_support_ema": 200,
@@ -241,8 +243,8 @@
       },
       "squeeze_accumulation": {
         "squeeze_share_pct": 33.7,
-        "ignition_count": 132,
-        "ignition_win_rate_8b": 0.402,
+        "ignition_count": 92,
+        "ignition_win_rate_8b": 0.446,
         "ignition_avg_atr_move_8b": 1.53
       },
       "volume_climax": {
@@ -274,6 +276,8 @@
       "efficiency_ratio_20": 0.191,
       "wick_ratio_mean": 0.597,
       "extreme_wick_pct": 0.5,
+      "needle_bar_pct": 0.0295,
+      "atr_tail_ratio": 1.74,
       "tail_3sigma_pct": 0.0222,
       "taker_buy_ratio": 0.4972,
       "sweep_behavior": {
@@ -290,10 +294,10 @@
       },
       "breakout_honesty": {
         "breakout_count": 58,
-        "continuation_rate": 0.397,
-        "trap_rate": 0.362,
-        "high_vol_continuation_rate": 0.4,
-        "low_vol_continuation_rate": 0.385
+        "continuation_rate": 0.483,
+        "trap_rate": 0.379,
+        "high_vol_continuation_rate": 0.467,
+        "low_vol_continuation_rate": 0.538
       },
       "key_ema_memory": {
         "best_support_ema": 200,
@@ -335,9 +339,9 @@
       },
       "squeeze_accumulation": {
         "squeeze_share_pct": 33.2,
-        "ignition_count": 30,
-        "ignition_win_rate_8b": 0.467,
-        "ignition_avg_atr_move_8b": 1.43
+        "ignition_count": 19,
+        "ignition_win_rate_8b": 0.474,
+        "ignition_avg_atr_move_8b": 1.47
       },
       "volume_climax": {
         "climax_count": 53,

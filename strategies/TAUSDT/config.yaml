@@ -8,11 +8,12 @@ base_policy:
   add_tranche_atr_step: 0.8
   max_chase_atr: 2.6
   cooldown_bars_after_sl: 3
+base_policy_overrides: {}
 timeframe: 15m
 family: sweep_fade
 family_zh: 主力插针扫损反手
 direction: long_only
-verdict: PASS
+verdict: WATCHLIST
 params:
   lookback: 36
   min_wick: 0.38
@@ -29,14 +30,15 @@ costs:
 days: 180
 whale_summary:
   style_tags:
-  - 高频长影插针
-  - 插针扫损易反抽
+  - 剧烈长影插针
+  - 上插针诱多易砸盘
+  - 真突破延续较好
   - EMA200空头压制记忆
   best_support_ema: 34
   best_resistance_ema: 200
   recommended_playbooks:
-  - sweep_fade
   - ema_defense_pullback
+  - sweep_fade
   - trend_breakout
   - squeeze_ignition
   - climax_reversal

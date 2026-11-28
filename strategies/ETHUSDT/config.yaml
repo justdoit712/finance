@@ -8,35 +8,36 @@ base_policy:
   add_tranche_atr_step: 0.6
   max_chase_atr: 3.0
   cooldown_bars_after_sl: 2
+base_policy_overrides: {}
 timeframe: 1h
-family: ema_defense_pullback
-family_zh: 主力护盘均线回踩承接
-direction: both
+family: climax_reversal
+family_zh: 主力巨量派发/衰竭反转
+direction: short_only
 verdict: PASS
 params:
-  trend_len: 34
-  rsi_len: 14
-  pullback_low: 36.0
-  atr_sl_mult: 2.6
+  bb_len: 16
+  bb_std: 2.5
+  rsi_os: 32.0
+  vol_spike: 2.0
+  atr_sl_mult: 2.5
 risk:
   atr_period: 14
-  atr_tp_mult: 3.6
+  atr_tp_mult: 2.8
   atr_trail_mult: null
-  cooldown_bars: 2
-  atr_sl_mult: 2.6
+  cooldown_bars: 3
+  atr_sl_mult: 2.5
 costs:
   fee_rate: 0.0005
   slippage: 0.0003
 days: 180
 whale_summary:
   style_tags:
-  - 高频长影插针
   - EMA200多头护盘记忆
   best_support_ema: 200
   best_resistance_ema: 200
   recommended_playbooks:
-  - sweep_fade
   - ema_defense_pullback
-  - trend_breakout
   - squeeze_ignition
+  - trend_breakout
   - climax_reversal
+  - sweep_fade
