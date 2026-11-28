@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TAUSDT 专属量化策略 (趋势回踩 RSI 恢复) — 自动生成后可针对该标的独立定制。"""
+"""TAUSDT 专属主力战术策略 (主力插针扫损反手) — 遵循底层基石，可针对该标的独立定制。"""
 
 from __future__ import annotations
 
@@ -18,34 +18,44 @@ if str(TOOLKIT_SCRIPTS) not in sys.path:
 from arena import adx, atr, bollinger_bands, donchian, ema, rsi, sma  # noqa: E402
 
 SYMBOL = "TAUSDT"
+ASSET_CLASS = "crypto_alt"
 TIMEFRAME = "15m"
-DIRECTION = "short_only"
-FAMILY = "rsi_momentum_pullback"
+DIRECTION = "long_only"
+FAMILY = "sweep_fade"
 
 DEFAULT_PARAMS: dict[str, Any] = {
-    "trend_len": 100,
-    "rsi_len": 14,
-    "pullback_low": 36.0,
-    "atr_sl_mult": 2.6
+    "lookback": 36,
+    "min_wick": 0.38,
+    "atr_sl_mult": 2.5
 }
 
 
 def generate_signals(df: pd.DataFrame, params: dict[str, Any] | None = None) -> dict[str, np.ndarray]:
     """返回 {entry_long, entry_short, exit_long, exit_short} 布尔信号数组。"""
     p = {**DEFAULT_PARAMS, **(params or {})}
-    close = df["close"].to_numpy(dtype=float)
-    pullback_low = float(p["pullback_low"])
-    pullback_high = 100.0 - pullback_low
+    o = df["open"].to_numpy(dtype=float)
+    h = df["high"].to_numpy(dtype=float)
+    l = df["low"].to_numpy(dtype=float)
+    c = df["close"].to_numpy(dtype=float)
 
-    trend_ema = ema(close, int(p["trend_len"]))
-    rsi_arr = rsi(close, int(p["rsi_len"]))
-    prev_rsi = np.roll(rsi_arr, 1)
-    prev_rsi[0] = np.nan
+    lookback = int(p["lookback"])
+    min_wick = float(p["min_wick"])
 
-    entry_long = (close > trend_ema) & (prev_rsi < pullback_low) & (rsi_arr >= pullback_low)
-    entry_short = (close < trend_ema) & (prev_rsi > pullback_high) & (rsi_arr <= pullback_high)
-    exit_long = (rsi_arr > 72.0) | (close < trend_ema * 0.99)
-    exit_short = (rsi_arr < 28.0) | (close > trend_ema * 1.01)
+    hi, lo = donchian(h, l, lookback)
+    prev_hi = np.roll(hi, 1)
+    prev_lo = np.roll(lo, 1)
+    prev_hi[0] = np.nan
+    prev_lo[0] = np.nan
+
+    bar_range = np.maximum(h - l, 1e-12)
+    lower_wick = (np.minimum(o, c) - l) / bar_range
+    upper_wick = (h - np.maximum(o, c)) / bar_range
+    mid_exit = sma(c, lookback)
+
+    entry_long = (l < prev_lo) & (c > prev_lo) & (lower_wick >= min_wick)
+    entry_short = (h > prev_hi) & (c < prev_hi) & (upper_wick >= min_wick)
+    exit_long = c >= mid_exit
+    exit_short = c <= mid_exit
     return {
         "entry_long": np.nan_to_num(entry_long, nan=False),
         "entry_short": np.nan_to_num(entry_short, nan=False),

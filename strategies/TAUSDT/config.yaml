@@ -1,21 +1,42 @@
 symbol: TAUSDT
+asset_class: crypto_alt
+base_policy:
+  label_zh: 加密山寨合约基石
+  max_leverage: 1.0
+  entry_tranches:
+  - 1.0
+  add_tranche_atr_step: 0.8
+  max_chase_atr: 2.6
+  cooldown_bars_after_sl: 3
 timeframe: 15m
-family: rsi_momentum_pullback
-family_zh: 趋势回踩 RSI 恢复
-direction: short_only
+family: sweep_fade
+family_zh: 主力插针扫损反手
+direction: long_only
 verdict: PASS
 params:
-  trend_len: 100
-  rsi_len: 14
-  pullback_low: 36.0
-  atr_sl_mult: 2.6
+  lookback: 36
+  min_wick: 0.38
+  atr_sl_mult: 2.5
 risk:
   atr_period: 14
-  atr_tp_mult: 3.6
+  atr_tp_mult: 3.0
   atr_trail_mult: null
   cooldown_bars: 2
-  atr_sl_mult: 2.6
+  atr_sl_mult: 2.5
 costs:
   fee_rate: 0.0005
   slippage: 0.0003
-days: 90
+days: 180
+whale_summary:
+  style_tags:
+  - 高频长影插针
+  - 插针扫损易反抽
+  - EMA200空头压制记忆
+  best_support_ema: 34
+  best_resistance_ema: 200
+  recommended_playbooks:
+  - sweep_fade
+  - ema_defense_pullback
+  - trend_breakout
+  - squeeze_ignition
+  - climax_reversal

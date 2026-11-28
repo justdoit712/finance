@@ -1,33 +1,56 @@
 language(1)
-indicator("ETHUSDT BB Mean Reversion", id = "strategy.ethusdt", max_bars_back = 2)
+indicator("ETHUSDT EMA Defense Pullback", id = "strategy.ethusdt", max_bars_back = 5)
 display(view = "plot", attachment = "overlay")
 format(precision = "base_ticker_min_tick")
-style("bull", title = "Long / Fast", role = "success", shade = "base")
-style("bear", title = "Short / Slow", role = "danger", shade = "base")
-style("mid", title = "Basis / Filter", role = "neutral", shade = "base")
+style("bull", title = "Long Entry", role = "success", shade = "base")
+style("bear", title = "Short Entry", role = "danger", shade = "base")
+style("mid", title = "Basis / Exit", role = "neutral", shade = "base")
 style("band", title = "Band Fill", role = "primary", shade = "faint")
-bb_len = input.int(16, "BB Period", min = 5, max = 200)
-bb_std = input.float(2.4, "BB Std", min = 0.5, max = 5.0)
-rsi_os = input.float(28.0, "RSI Oversold", min = 10.0, max = 45.0)
-trend_len = input.int(200, "Macro EMA", min = 20, max = 500)
-basis = ta.sma(chart.close, bb_len)
-dev = ta.stdev(chart.close, bb_len) * bb_std
-upper = basis + dev
-lower = basis - dev
-rsi_val = ta.rsi(chart.close, 14)
-macro_ema = ta.ema(chart.close, trend_len)
-entry_long = !na(lower) && !na(rsi_val) && !na(macro_ema) && chart.close < lower && rsi_val <= rsi_os && chart.close >= macro_ema * 0.94
-entry_short = !na(upper) && !na(rsi_val) && !na(macro_ema) && chart.close > upper && rsi_val >= 72.0 && chart.close <= macro_ema * 1.06
-plot(basis, id = "bb_mid", title = "BB Basis", precision = "instrument", color_slot = "mid", width = 1.0, pane = "main")
-plot(upper, id = "bb_upper", title = "BB Upper", precision = "instrument", color_slot = "bear", width = 1.1, pane = "main")
-plot(lower, id = "bb_lower", title = "BB Lower", precision = "instrument", color_slot = "bull", width = 1.1, pane = "main")
-plot(macro_ema, id = "macro_ema", title = "Macro EMA", precision = "instrument", color_slot = "mid", width = 1.2, pane = "main")
-fill(upper = "bb_upper", lower = "bb_lower", geometry = "series_band", color_slot = "band", opacity = 0.10)
-allow_long = false
+style("stop", title = "ATR Stop", role = "warning", shade = "base")
+trend_len = input.int(34, "Defense EMA", min = 5, max = 500)
+rsi_len = input.int(14, "RSI Period", min = 2, max = 50)
+pullback_low = input.float(36.0, "Pullback RSI", min = 15.0, max = 50.0)
+trend_ema = ta.ema(chart.close, trend_len)
+rsi_val = ta.rsi(chart.close, rsi_len)
+prev_rsi = rsi_val[1]
+tr_val = ta.tr(chart.high, chart.low, chart.close)
+atr_val = ta.rma(tr_val, 14)
+near_sup = !na(trend_ema) && !na(atr_val) && chart.close >= trend_ema * 0.99 && chart.close <= trend_ema + 2.2 * atr_val
+near_res = !na(trend_ema) && !na(atr_val) && chart.close <= trend_ema * 1.01 && chart.close >= trend_ema - 2.2 * atr_val
+entry_long = near_sup && !na(prev_rsi) && !na(rsi_val) && prev_rsi < pullback_low && rsi_val >= pullback_low
+entry_short = near_res && !na(prev_rsi) && !na(rsi_val) && prev_rsi > 64.0 && rsi_val <= 64.0
+exit_long = (!na(rsi_val) && rsi_val > 72.0) || (!na(trend_ema) && chart.close < trend_ema * 0.985)
+exit_short = (!na(rsi_val) && rsi_val < 28.0) || (!na(trend_ema) && chart.close > trend_ema * 1.015)
+plot(trend_ema, id = "trend_ema", title = "Defense EMA", precision = "instrument", color_slot = "mid", width = 1.4, pane = "main")
+atr_sl_mult = input.float(2.60, "ATR Stop Mult", min = 0.5, max = 10.0)
+allow_long = true
 allow_short = true
-long_sig = select(allow_long && entry_long, chart.low, na)
-short_sig = select(allow_short && entry_short, chart.high, na)
+raw_long = allow_long && entry_long
+raw_short = allow_short && entry_short
+raw_exit_long = exit_long || (allow_short && entry_short)
+raw_exit_short = exit_short || (allow_long && entry_long)
+state pos = 0
+state stop_px = 0.0
+prev_pos = pos
+prev_stop = stop_px
+stopped_long = prev_pos == 1 && prev_stop > 0.0 && chart.low <= prev_stop
+stopped_short = prev_pos == -1 && prev_stop > 0.0 && chart.high >= prev_stop
+do_exit_long = prev_pos == 1 && (raw_exit_long || stopped_long)
+do_exit_short = prev_pos == -1 && (raw_exit_short || stopped_short)
+pos_after_exit = select(do_exit_long || do_exit_short, 0, prev_pos)
+can_enter = pos_after_exit == 0 && !na(atr_val) && atr_val > 0.0
+do_enter_long = can_enter && raw_long && !raw_short
+do_enter_short = can_enter && raw_short && !raw_long
+pos := select(do_enter_long, 1, select(do_enter_short, -1, select(do_exit_long || do_exit_short, 0, prev_pos)))
+stop_px := select(do_enter_long, chart.close - atr_sl_mult * atr_val, select(do_enter_short, chart.close + atr_sl_mult * atr_val, select(do_exit_long || do_exit_short, 0.0, prev_stop)))
+long_sig = select(do_enter_long, chart.low, na)
+short_sig = select(do_enter_short, chart.high, na)
+exit_sig = select(do_exit_long || do_exit_short, chart.close, na)
+active_stop = select(pos != 0 && stop_px > 0.0, stop_px, na)
 plot(long_sig, id = "long_entry", title = "Long Entry", precision = "instrument", color_slot = "bull", width = 5, pane = "main")
 plot(short_sig, id = "short_entry", title = "Short Entry", precision = "instrument", color_slot = "bear", width = 5, pane = "main")
+plot(exit_sig, id = "exit_sig", title = "Exit Signal", precision = "instrument", color_slot = "mid", width = 4, pane = "main")
+plot(active_stop, id = "stop_line", title = "ATR Stop", precision = "instrument", color_slot = "stop", width = 1.2, style = "step", pane = "main")
 mark(title = "Long Signal", source = "long_entry", kind = "point", color_slot = "bull")
 mark(title = "Short Signal", source = "short_entry", kind = "point", color_slot = "bear")
+mark(title = "Exit Mark", source = "exit_sig", kind = "cross", color_slot = "mid")

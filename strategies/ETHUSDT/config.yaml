@@ -1,21 +1,42 @@
 symbol: ETHUSDT
+asset_class: crypto_major
+base_policy:
+  label_zh: 加密主流合约基石
+  max_leverage: 1.0
+  entry_tranches:
+  - 1.0
+  add_tranche_atr_step: 0.6
+  max_chase_atr: 3.0
+  cooldown_bars_after_sl: 2
 timeframe: 1h
-family: bb_mean_reversion
-family_zh: 布林+RSI 均值回归
-direction: short_only
-verdict: NO_EDGE
+family: ema_defense_pullback
+family_zh: 主力护盘均线回踩承接
+direction: both
+verdict: PASS
 params:
-  bb_len: 16
-  bb_std: 2.4
-  rsi_os: 28.0
-  atr_sl_mult: 2.5
+  trend_len: 34
+  rsi_len: 14
+  pullback_low: 36.0
+  atr_sl_mult: 2.6
 risk:
   atr_period: 14
-  atr_tp_mult: 3.0
+  atr_tp_mult: 3.6
   atr_trail_mult: null
-  cooldown_bars: 3
-  atr_sl_mult: 2.5
+  cooldown_bars: 2
+  atr_sl_mult: 2.6
 costs:
   fee_rate: 0.0005
   slippage: 0.0003
 days: 180
+whale_summary:
+  style_tags:
+  - 高频长影插针
+  - EMA200多头护盘记忆
+  best_support_ema: 200
+  best_resistance_ema: 200
+  recommended_playbooks:
+  - sweep_fade
+  - ema_defense_pullback
+  - trend_breakout
+  - squeeze_ignition
+  - climax_reversal
