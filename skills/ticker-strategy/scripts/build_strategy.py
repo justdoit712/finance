@@ -23,10 +23,10 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from arena import FAMILY_SPECS, build_backtest_config, run_arena, run_perp_backtest  # noqa: E402
-from base_policy import load_base_policy  # noqa: E402
+from base_policy import apply_policy_overrides, load_base_policy  # noqa: E402
 from export_ind import generate_ind_source, install_to_flowsurface  # noqa: E402
 from fetch_binance import fetch_funding_rate, fetch_klines, fetch_metrics  # noqa: E402
-from notes_manager import append_note, ensure_notes_file, extract_recent_notes  # noqa: E402
+from notes_manager import append_note, ensure_notes_file, extract_recent_notes, sync_notes_to_report  # noqa: E402
 from profile_ticker import build_ticker_profile, format_pretty_profile  # noqa: E402
 from validate_oos import validate_candidates  # noqa: E402
 
@@ -403,6 +403,7 @@ def cmd_note(args: argparse.Namespace) -> None:
 
     if args.add:
         append_note(symbol, out_dir, args.add, tag=args.tag, asset_class_zh=base_policy["label_zh"])
+        sync_notes_to_report(out_dir / "report.md", symbol, notes_path)
         print(f"✓ 已追加 {symbol} 主力观察笔记 -> {notes_path}")
     if args.show or not args.add:
         print(notes_path.read_text(encoding="utf-8"))
@@ -476,6 +477,7 @@ def cmd_build(args: argparse.Namespace) -> None:
             "max_chase_atr": base_policy["max_chase_atr"],
             "cooldown_bars_after_sl": base_policy["cooldown_bars_after_sl"],
         },
+        "base_policy_overrides": {},
         "timeframe": winner["timeframe"],
         "family": winner["family"],
         "family_zh": winner["family_zh"],
@@ -506,7 +508,7 @@ def cmd_build(args: argparse.Namespace) -> None:
     )
     (out_dir / "strategy.py").write_text(strategy_code, encoding="utf-8")
 
-    ind_src = generate_ind_source(symbol, winner["family"], winner["direction"], winner["prod_params"])
+    ind_src = generate_ind_source(symbol, winner["family"], winner["direction"], winner["prod_params"], risk=winner["risk"])
     ind_path = out_dir / f"{symbol.lower()}.ind"
     ind_path.write_text(ind_src, encoding="utf-8")
 
@@ -552,11 +554,11 @@ def cmd_rerun(args: argparse.Namespace) -> None:
     params = dict(cfg.get("params", {}))
     risk = dict(cfg.get("risk", {}))
 
-    # Merge Layer-1 policy from _base_policies.yaml (allows global base rule updates to apply on rerun)
-    base_policy = load_base_policy(symbol, asset_class_override=cfg.get("asset_class"))
-    if isinstance(cfg.get("base_policy"), dict):
-        # Keep any explicit per-ticker overrides if user manually customized config.yaml
-        pass
+    # Load latest Layer-1 policy from _base_policies.yaml and merge optional per-ticker overrides
+    base_policy = apply_policy_overrides(
+        load_base_policy(symbol, asset_class_override=cfg.get("asset_class")),
+        cfg.get("base_policy_overrides"),
+    )
 
     cache_dir = out_dir / ".cache"
     df = fetch_klines(symbol, tf, days, cache_dir=cache_dir, refresh=args.refresh)
@@ -600,12 +602,14 @@ def cmd_rerun(args: argparse.Namespace) -> None:
 
     family = cfg.get("family", "")
     if family in FAMILY_SPECS:
-        ind_src = generate_ind_source(symbol, family, bt_cfg["direction"], params)
+        ind_src = generate_ind_source(symbol, family, bt_cfg["direction"], params, risk=risk)
         ind_path = out_dir / f"{symbol.lower()}.ind"
         ind_path.write_text(ind_src, encoding="utf-8")
         if args.install_ind:
             for p in install_to_flowsurface(ind_path, symbol):
                 print(f"  -> 已更新 Flowsurface 指标: {p}")
+
+    sync_notes_to_report(out_dir / "report.md", symbol, out_dir / "notes.md")
 
     print(
         f"[RERUN {symbol}] tf={tf} dir={bt_cfg['direction']} | 基石={base_policy['label_zh']} ({base_policy['max_leverage']}x) | "

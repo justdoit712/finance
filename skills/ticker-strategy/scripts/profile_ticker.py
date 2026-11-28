@@ -177,7 +177,7 @@ def _analyze_sweeps(df: pd.DataFrame, lookback: int = 20, fwd_bars: int = 6) -> 
 def _analyze_breakout_honesty(df: pd.DataFrame, atr_arr: np.ndarray, lookback: int = 20) -> dict[str, Any]:
     """Measure whether 20-bar close breakouts genuinely follow through or turn into bull/bear traps."""
     n = len(df)
-    fwd = 4
+    fwd = 6
     if n < lookback + fwd + 5:
         return {
             "breakout_count": 0,
@@ -214,21 +214,20 @@ def _analyze_breakout_honesty(df: pd.DataFrame, atr_arr: np.ndarray, lookback: i
         if is_up:
             lvl = prev_hi[i]
             fav_exc = float(np.max(h[i + 1 : i + 1 + fwd]) - c[i])
-            holds = c[i + fwd] > c[i]
-            trapped = np.any(c[i + 1 : i + 1 + fwd] < lvl) and fav_exc < 0.8 * a
+            trapped = bool(c[i + fwd] < lvl)
+            continued = bool(c[i + fwd] > c[i] and fav_exc >= 0.5 * a)
         else:
             lvl = prev_lo[i]
             fav_exc = float(c[i] - np.min(l[i + 1 : i + 1 + fwd]))
-            holds = c[i + fwd] < c[i]
-            trapped = np.any(c[i + 1 : i + 1 + fwd] > lvl) and fav_exc < 0.8 * a
+            trapped = bool(c[i + fwd] > lvl)
+            continued = bool(c[i + fwd] < c[i] and fav_exc >= 0.5 * a)
 
-        continued = (fav_exc >= 0.8 * a) and holds
-        cont_flags.append(bool(continued))
-        trap_flags.append(bool(trapped))
+        cont_flags.append(continued)
+        trap_flags.append(trapped)
         if is_hv:
-            hv_cont.append(bool(continued))
+            hv_cont.append(continued)
         else:
-            lv_cont.append(bool(continued))
+            lv_cont.append(continued)
 
     return {
         "breakout_count": len(cont_flags),
@@ -343,6 +342,8 @@ def _analyze_squeeze_and_climax(df: pd.DataFrame, atr_arr: np.ndarray) -> tuple[
     s_close = pd.Series(c)
     mid = s_close.rolling(20, min_periods=20).mean()
     std = s_close.rolling(20, min_periods=20).std(ddof=0)
+    upper_arr = (mid + 2.0 * std).to_numpy()
+    lower_arr = (mid - 2.0 * std).to_numpy()
     bw = ((2.0 * std * 2.0) / mid.replace(0.0, np.nan)).to_numpy()
     bw_q30 = pd.Series(bw).rolling(100, min_periods=40).quantile(0.30).to_numpy()
     vol_ma = pd.Series(vol).rolling(20, min_periods=20).mean().to_numpy()
@@ -361,13 +362,16 @@ def _analyze_squeeze_and_climax(df: pd.DataFrame, atr_arr: np.ndarray) -> tuple[
             and a > 0
             and np.isfinite(bw[i - 1])
             and np.isfinite(bw_q30[i - 1])
+            and np.isfinite(upper_arr[i])
+            and np.isfinite(lower_arr[i])
             and np.isfinite(vol_ma[i])
             and vol_ma[i] > 0
             and bw[i - 1] <= bw_q30[i - 1] * 1.15
             and vol[i] >= 1.8 * vol_ma[i]
+            and ((c[i] > upper_arr[i]) or (c[i] < lower_arr[i]))
             and abs(c[i] - o[i]) > 0.25 * (h[i] - l[i])
         ):
-            direction = 1.0 if c[i] > o[i] else -1.0
+            direction = 1.0 if c[i] > upper_arr[i] else -1.0
             move = direction * (c[i + fwd_ign] - c[i])
             ign_wins.append(move > 0)
             ign_atr_moves.append(float(abs(c[i + fwd_ign] - c[i]) / a))
@@ -518,6 +522,11 @@ def profile_timeframe(df: pd.DataFrame, interval: str) -> dict[str, Any]:
     wick_mean = float(np.mean(wick_ratio[valid_range])) if valid_range.any() else 0.0
     extreme_wick_pct = float(np.mean(wick_ratio[valid_range] > 0.60)) if valid_range.any() else 0.0
 
+    single_max_wick = np.maximum(h - body_top, body_bot - l) / np.where(valid_range, bar_range, 1.0)
+    is_needle = valid_range & np.isfinite(atr14) & (bar_range >= 1.5 * atr14) & (single_max_wick >= 0.50)
+    needle_bar_pct = float(np.mean(is_needle))
+    atr_tail_ratio = float(atr_p95 / max(atr_med, 1e-9)) if atr_med > 0 else 1.0
+
     tail_3s = float(np.mean(np.abs(log_ret - np.mean(log_ret)) > 3.0 * ret_std)) if ret_std > 1e-12 else 0.0
 
     ms_span = max(int(df["open_time"].iloc[-1] - df["open_time"].iloc[0]), INTERVAL_MS.get(interval, 3_600_000))
@@ -557,6 +566,8 @@ def profile_timeframe(df: pd.DataFrame, interval: str) -> dict[str, Any]:
         "efficiency_ratio_20": round(_efficiency_ratio(c, 20), 3),
         "wick_ratio_mean": round(wick_mean, 3),
         "extreme_wick_pct": round(extreme_wick_pct, 3),
+        "needle_bar_pct": round(needle_bar_pct, 4),
+        "atr_tail_ratio": round(atr_tail_ratio, 2),
         "tail_3sigma_pct": round(tail_3s, 4),
         "taker_buy_ratio": round(taker_buy_ratio, 4),
         "sweep_behavior": sweeps,
@@ -601,14 +612,17 @@ def _synthesize_whale_diagnosis(
     clx_body_cont = float(clx.get("climax_body_continuation_rate_6b", 0.0))
 
     wick_mean = float(anchor.get("wick_ratio_mean", 0.0))
+    needle_pct = float(anchor.get("needle_bar_pct", 0.0))
     tbr = float(anchor.get("taker_buy_ratio", 0.5))
 
     # 1) Style tags
     tags: list[str] = []
     if wick_risk == "high":
-        tags.append("高频长影插针")
-    if max(bull_win, bear_win) >= 0.55 and (bull_cnt + bear_cnt) >= 8:
-        tags.append("插针扫损易反抽")
+        tags.append("剧烈长影插针")
+    if bull_win >= 0.55 and bull_cnt >= 5:
+        tags.append("下插针洗盘易反弹")
+    if bear_win >= 0.55 and bear_cnt >= 5:
+        tags.append("上插针诱多易砸盘")
     if trap_rate >= 0.50:
         tags.append("假突破骗炮偏多")
     elif cont_rate >= 0.45:
@@ -629,12 +643,12 @@ def _synthesize_whale_diagnosis(
     bj_wick = ", ".join(f"{h:02d}:00" for h in session_info.get("wick_danger_bj_hours", [])[:3]) or "-"
     summary_lines = [
         (
-            f"**插针扫损习性**：平均影线占比 `{wick_mean * 100:.1f}%`（风险 `{wick_risk}`）；"
+            f"**插针扫损习性**：剧烈长针 K 线占比 `{needle_pct * 100:.1f}%` / 平均影线 `{wick_mean * 100:.1f}%`（风险 `{wick_risk}`）；"
             f"向下插针前低收回后 6 根反弹胜率 `{bull_win * 100:.1f}%`（{bull_cnt} 次），"
             f"向上诱多收回后回落胜率 `{bear_win * 100:.1f}%`（{bear_cnt} 次）。"
         ),
         (
-            f"**突破真假诚实度**：20 根前高低点突破延续率 `{cont_rate * 100:.1f}%` vs 4 根内诱多/诱空骗炮率 `{trap_rate * 100:.1f}%`"
+            f"**突破真假诚实度**：20 根前高低点突破 6 根延续率 `{cont_rate * 100:.1f}%` vs 6 根内跌回箱体骗炮率 `{trap_rate * 100:.1f}%`"
             f"（放量突破延续 `{hv_cont * 100:.1f}%` vs 缩量突破 `{lv_cont * 100:.1f}%`）。"
         ),
         (
@@ -642,7 +656,7 @@ def _synthesize_whale_diagnosis(
             f"下跌期反抽压制最明显为 `EMA{res_ema}`（6 根回落胜率 `{res_rate * 100:.1f}%`）。"
         ),
         (
-            f"**吸筹点火与巨量意图**：布林缩口吸筹期占比 `{sq_share:.1f}%`，缩口放量点火后 8 根顺势胜率 `{ign_win * 100:.1f}%`"
+            f"**吸筹点火与巨量意图**：布林缩口吸筹期占比 `{sq_share:.1f}%`，缩口放量突破后 8 根顺势胜率 `{ign_win * 100:.1f}%`"
             f"（平均波幅 `{ign_atr:.2f} ATR`）；2.5 倍巨量长影线反转率 `{clx_wick_rev * 100:.1f}%`，巨量实体顺势延续率 `{clx_body_cont * 100:.1f}%`，主动买盘占比 `{tbr * 100:.1f}%`。"
         ),
         (
@@ -653,22 +667,24 @@ def _synthesize_whale_diagnosis(
 
     # 3) Taboos
     taboos: list[str] = []
-    if trap_rate >= 0.48 or lv_cont < 0.35:
-        taboos.append(f"20 周期突破骗炮率 `{trap_rate * 100:.0f}%`（缩量突破延续仅 `{lv_cont * 100:.0f}%`），严禁无量追涨杀跌。")
+    if trap_rate >= 0.50:
+        taboos.append(f"20 周期突破 6 根内跌回箱体骗炮率高达 `{trap_rate * 100:.0f}%`，严禁突破追单，宜等回踩或反做假突破。")
+    elif lv_cont < 0.35 and (hv_cont - lv_cont) >= 0.08:
+        taboos.append(f"缩量突破延续率仅 `{lv_cont * 100:.0f}%`（放量突破为 `{hv_cont * 100:.0f}%`），无量突破切勿跟进。")
     if wick_risk == "high":
-        taboos.append(f"平均影线占比高达 `{wick_mean * 100:.0f}%`，严禁把止损贴在前低/前高 1 倍 ATR 内；重点防备北京时间 `{bj_wick}` 插针。")
+        taboos.append(f"剧烈长针占比达 `{needle_pct * 100:.1f}%`（平均影线 `{wick_mean * 100:.0f}%`），严禁紧贴前低/前高设窄止损；重点防备北京时间 `{bj_wick}` 插针。")
     if clx_wick_rev >= 0.55 and int(clx.get("wick_climax_count", 0)) >= 4:
         taboos.append(f"2.5 倍以上巨量长影线后反转率 `{clx_wick_rev * 100:.0f}%`，遇巨量长上/下影切忌反手追单。")
     if not taboos:
         taboos.append("严格遵守底层不追仓上限与止损冷静期，不与主力单边放量结构硬扛。")
 
-    # 4) Dynamic ranking of the 5 playbooks
+    # 4) Dynamic ranking of the 5 playbooks by excess edge above 0.48
     scores = {p: 0.0 for p in PLAYBOOKS}
-    scores["sweep_fade"] += 1.4 * max(bull_win, bear_win) + 0.6 * trap_rate + (0.25 if wick_risk == "high" else 0.0)
-    scores["ema_defense_pullback"] += 1.3 * max(sup_rate, res_rate) + (0.25 if regime == "trending" else 0.0)
-    scores["squeeze_ignition"] += 1.2 * ign_win + (0.25 if sq_share >= 25.0 else 0.0) + 0.3 * hv_cont
-    scores["climax_reversal"] += 1.2 * clx_wick_rev + (0.25 if regime == "mean_reverting" else 0.0) + 0.3 * trap_rate
-    scores["trend_breakout"] += 1.3 * cont_rate + 0.4 * hv_cont + (0.25 if regime == "trending" else -0.15)
+    scores["sweep_fade"] = 2.0 * max(bull_win - 0.48, bear_win - 0.48, 0.0) + 0.8 * max(trap_rate - 0.45, 0.0) + (0.12 if wick_risk == "high" else 0.0)
+    scores["ema_defense_pullback"] = 2.0 * max(sup_rate - 0.48, res_rate - 0.48, 0.0) + (0.15 if regime == "trending" else 0.0)
+    scores["squeeze_ignition"] = 1.8 * max(ign_win - 0.48, 0.0) + (0.12 if sq_share >= 28.0 else 0.0) + 0.4 * max(hv_cont - 0.45, 0.0)
+    scores["climax_reversal"] = 1.8 * max(clx_wick_rev - 0.48, 0.0) + (0.15 if regime == "mean_reverting" else 0.0) + 0.5 * max(trap_rate - 0.45, 0.0)
+    scores["trend_breakout"] = 2.0 * max(cont_rate - 0.45, 0.0) + 0.5 * max(hv_cont - 0.45, 0.0) + (0.12 if regime == "trending" else -0.10)
     recommended = [k for k, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)]
 
     return {
@@ -709,6 +725,8 @@ def build_ticker_profile(
     ac1 = anchor.get("lag1_autocorr", 0.0)
     kurt = anchor.get("excess_kurtosis", 0.0)
     wick_mean = anchor.get("wick_ratio_mean", 0.4)
+    needle_pct = anchor.get("needle_bar_pct", 0.0)
+    atr_tail_ratio = anchor.get("atr_tail_ratio", 1.0)
     ann_vol = anchor.get("ann_volatility", 0.6)
 
     if (hurst >= 0.54 and adx_mean >= 23.0) or er >= 0.30:
@@ -720,7 +738,12 @@ def build_ticker_profile(
     else:
         regime = "mixed"
 
-    wick_risk = "high" if wick_mean >= 0.48 else ("medium" if wick_mean >= 0.36 else "low")
+    if needle_pct >= 0.14 or atr_tail_ratio >= 2.15 or wick_mean >= 0.62:
+        wick_risk = "high"
+    elif needle_pct >= 0.08 or atr_tail_ratio >= 1.75 or wick_mean >= 0.56:
+        wick_risk = "medium"
+    else:
+        wick_risk = "low"
     whale_diag = _synthesize_whale_diagnosis(anchor, session_info, regime, wick_risk)
 
     funding_summary: dict[str, Any] = {"records": 0}

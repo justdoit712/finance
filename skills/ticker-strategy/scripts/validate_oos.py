@@ -96,7 +96,11 @@ def walk_forward_group(
         is_sharpes.append(best_train_sharpe)
         selected_params_list.append(best_params)
 
-        te_sigs = spec.signal_fn(te_df, best_params)
+        warm_start = max(0, te_start - 250)
+        warm_df = df.iloc[warm_start:te_end].reset_index(drop=True)
+        warm_sigs = spec.signal_fn(warm_df, best_params)
+        offset = te_start - warm_start
+        te_sigs = {k: np.asarray(v, dtype=bool)[offset:] for k, v in warm_sigs.items()}
         te_cfg = build_backtest_config(timeframe, direction, spec, best_params, fee_rate, slippage, base_policy)
         te_res = run_perp_backtest(te_df, te_sigs, te_cfg, funding_df=funding_df)
         te_m = te_res["metrics"]

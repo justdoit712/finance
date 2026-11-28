@@ -263,9 +263,7 @@ def run_perp_backtest(
             fill_px = raw_exit_px * (1.0 + cost_rate)
             gross_ret = 1.0 - (raw_exit_px / entry_px)
 
-        ref_prev = (entry_px / (1.0 + cost_rate)) if (entered_now and pos == 1) else (
-            (entry_px / (1.0 - cost_rate)) if entered_now else closes[exit_i - 1]
-        )
+        ref_prev = opens[exit_i] if entered_now else closes[exit_i - 1]
         if pos == 1:
             step_ret = (raw_exit_px / max(ref_prev, 1e-12) - 1.0) * eff_lev
         else:

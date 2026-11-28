@@ -124,3 +124,45 @@ def extract_recent_notes(notes_path: Path, limit: int = 8) -> list[str]:
             if body and not body.startswith("（"):
                 entries.append(body)
     return entries[-limit:]
+
+
+def sync_notes_to_report(report_path: Path, symbol: str, notes_path: Path) -> bool:
+    """Refresh Section 2 (人工盯盘观察笔记摘录) inside report.md when notes.md changes."""
+    if not report_path.exists():
+        return False
+    lines = report_path.read_text(encoding="utf-8").splitlines()
+    target_heading = "## 二、 人工盯盘观察笔记摘录"
+    start_idx: int | None = None
+    end_idx: int | None = None
+    for idx, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith(target_heading):
+            start_idx = idx
+            continue
+        if start_idx is not None and s.startswith("## "):
+            end_idx = idx
+            break
+    if start_idx is None:
+        return False
+
+    recent = extract_recent_notes(notes_path)
+    new_body = (
+        [f"- {item}" for item in recent]
+        if recent
+        else [
+            f"- 暂无人工观察记录。平时盯盘发现该币庄家规律后，可写入 `strategies/{symbol}/notes.md` 或执行："
+            f"`python skills/ticker-strategy/scripts/build_strategy.py note --symbol {symbol} --add \"观察内容\"`"
+        ]
+    )
+
+    if end_idx is None:
+        updated_lines = lines[: start_idx + 1] + [""] + new_body + [""]
+    else:
+        tail_sep = ["", "---", ""] if end_idx > 0 and lines[end_idx - 1].strip() == "---" else [""]
+        # Check if there is a `---` separator right before end_idx
+        has_sep = any(lines[k].strip() == "---" for k in range(start_idx + 1, end_idx))
+        middle = [""] + new_body + (["", "---", ""] if has_sep else [""])
+        updated_lines = lines[: start_idx + 1] + middle + lines[end_idx:]
+
+    report_path.write_text("\n".join(updated_lines).rstrip() + "\n", encoding="utf-8")
+    return True

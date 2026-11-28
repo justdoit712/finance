@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_POLICIES_PATH = REPO_ROOT / "strategies" / "_base_policies.yaml"
 
 DEFAULT_POLICY_TEMPLATES: dict[str, dict[str, Any]] = {
@@ -111,3 +111,29 @@ def load_base_policy(
         "cooldown_bars_after_sl": max(int(raw.get("cooldown_bars_after_sl", 2)), 0),
         "notes_zh": str(raw.get("notes_zh", "")),
     }
+
+
+def apply_policy_overrides(base_policy: dict[str, Any], overrides: dict[str, Any] | None) -> dict[str, Any]:
+    """Merge per-ticker Layer-1 policy overrides onto the asset-class base policy."""
+    merged = dict(base_policy)
+    if not isinstance(overrides, dict) or not overrides:
+        return merged
+
+    if overrides.get("max_leverage") is not None:
+        merged["max_leverage"] = max(float(overrides["max_leverage"]), 0.1)
+    if overrides.get("entry_tranches") is not None:
+        raw_t = overrides["entry_tranches"]
+        if isinstance(raw_t, list):
+            tranches = [float(x) for x in raw_t if float(x) > 0.0]
+            if tranches:
+                total_w = sum(tranches)
+                if total_w > 1.0:
+                    tranches = [round(x / total_w, 4) for x in tranches]
+                merged["entry_tranches"] = tranches
+    if overrides.get("add_tranche_atr_step") is not None:
+        merged["add_tranche_atr_step"] = max(float(overrides["add_tranche_atr_step"]), 0.1)
+    if "max_chase_atr" in overrides:
+        merged["max_chase_atr"] = float(overrides["max_chase_atr"]) if overrides["max_chase_atr"] is not None else None
+    if overrides.get("cooldown_bars_after_sl") is not None:
+        merged["cooldown_bars_after_sl"] = max(int(overrides["cooldown_bars_after_sl"]), 0)
+    return merged
