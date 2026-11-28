@@ -1,0 +1,65 @@
+# ==============================================================================
+# 第一层：底层固定交易基石 (Base Risk & Position Policies)
+# ==============================================================================
+# 说明：
+# - 本文件定义不同资产大类的底层固定风控与仓位铁律，供第二层“一币一策”统一继承。
+# - 所有参数均为基础模板，后续可在实战复盘中随时微调（修改后对相关标的执行 rerun 即可生效）。
+#
+# 字段说明：
+# - label_zh:             资产大类中文名称
+# - symbols:              归属该大类的合约代码列表（未显式列出的加密合约默认归入 crypto_alt）
+# - max_leverage:         最大允许杠杆倍数（例如 1.0 = 1倍无杠杆，2.0 = 最高2倍）
+# - entry_tranches:       分仓建仓比例列表（例如 [1.0] 为单仓全进；[0.4, 0.3, 0.3] 为三批分仓）
+# - add_tranche_atr_step: 分批加仓触发间距（以 ATR 倍数计；回踩或顺势确认达标后追加下一批）
+# - max_chase_atr:        防追仓偏离上限（价格偏离 EMA20 超过 N 倍 ATR 时禁止顺势追单）
+# - cooldown_bars_after_sl: 触发止损后的强制冷静期（K 线根数，防止连续打脸扫损）
+# - notes_zh:             底层方针说明
+# ==============================================================================
+
+crypto_major:
+  label_zh: "加密主流合约基石"
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - DOGEUSDT
+  max_leverage: 1.0
+  entry_tranches: [1.0]
+  add_tranche_atr_step: 0.6
+  max_chase_atr: 3.0
+  cooldown_bars_after_sl: 2
+  notes_zh: "低倍稳健底座；偏离 20 均线超过 3 倍 ATR 禁止追单；后续可按实战习惯调整分仓比例与杠杆上限"
+
+crypto_alt:
+  label_zh: "加密山寨合约基石"
+  symbols: []
+  max_leverage: 1.0
+  entry_tranches: [1.0]
+  add_tranche_atr_step: 0.8
+  max_chase_atr: 2.6
+  cooldown_bars_after_sl: 3
+  notes_zh: "山寨币插针剧烈，严控杠杆与追高偏离度，止损后强制冷静期防连续扫损"
+
+tradfi_stock:
+  label_zh: "股票与传统资产合约基石"
+  symbols:
+    - XAUUSDT
+    - XAGUSDT
+    - NIOUSDT
+    - TSLAUSDT
+    - AAPLUSDT
+    - NVDAUSDT
+    - COINUSDT
+    - MSTRUSDT
+    - AMZNUSDT
+    - GOOGLUSDT
+    - METAUSDT
+    - MSFTUSDT
+  max_leverage: 1.0
+  entry_tranches: [1.0]
+  add_tranche_atr_step: 0.5
+  max_chase_atr: 2.5
+  cooldown_bars_after_sl: 2
+  notes_zh: "受美股与传统盘交易时段影响明显，严禁开盘脉冲追单"
