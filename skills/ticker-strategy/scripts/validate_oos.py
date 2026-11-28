@@ -8,7 +8,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from arena import FAMILY_SPECS, compute_metrics, expand_param_grid, run_perp_backtest
+from arena import (
+    FAMILY_SPECS,
+    build_backtest_config,
+    compute_metrics,
+    expand_param_grid,
+    get_param_axes,
+    run_perp_backtest,
+)
 
 
 def _dedupe_candidates(candidates: list[dict[str, Any]], max_groups: int = 8) -> list[dict[str, Any]]:
@@ -36,10 +43,12 @@ def walk_forward_group(
     n_folds: int = 4,
     gap_bars: int = 8,
     min_train_ratio: float = 0.45,
+    profile: dict[str, Any] | None = None,
+    base_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Anchored expanding-window Walk-Forward CV for one (timeframe, family, direction) group."""
     spec = FAMILY_SPECS[family]
-    grid = expand_param_grid(spec)
+    grid = expand_param_grid(spec, profile)
     n = len(df)
     train_start_end = int(n * min_train_ratio)
     remaining = n - train_start_end
@@ -73,14 +82,7 @@ def walk_forward_group(
 
         for params in grid:
             sigs = spec.signal_fn(tr_df, params)
-            cfg = {
-                "direction": direction,
-                "fee_rate": fee_rate,
-                "slippage": slippage,
-                "interval": timeframe,
-                **spec.default_risk,
-                "atr_sl_mult": params.get("atr_sl_mult", 2.0),
-            }
+            cfg = build_backtest_config(timeframe, direction, spec, params, fee_rate, slippage, base_policy)
             res = run_perp_backtest(tr_df, sigs, cfg, funding_df=funding_df)
             m = res["metrics"]
             if m["trades"] < 6:
@@ -95,14 +97,7 @@ def walk_forward_group(
         selected_params_list.append(best_params)
 
         te_sigs = spec.signal_fn(te_df, best_params)
-        te_cfg = {
-            "direction": direction,
-            "fee_rate": fee_rate,
-            "slippage": slippage,
-            "interval": timeframe,
-            **spec.default_risk,
-            "atr_sl_mult": best_params.get("atr_sl_mult", 2.0),
-        }
+        te_cfg = build_backtest_config(timeframe, direction, spec, best_params, fee_rate, slippage, base_policy)
         te_res = run_perp_backtest(te_df, te_sigs, te_cfg, funding_df=funding_df)
         te_m = te_res["metrics"]
 
@@ -148,7 +143,6 @@ def walk_forward_group(
     avg_is_sharpe = float(np.mean(is_sharpes)) if is_sharpes else 0.0
     is_oos_ratio = (oos_metrics["sharpe"] / avg_is_sharpe) if avg_is_sharpe > 0.05 else 0.0
 
-    # Use most recent fold's best params as production candidate params
     prod_params = selected_params_list[-1]
 
     return {
@@ -175,10 +169,12 @@ def check_parameter_plateau(
     funding_df: pd.DataFrame | None = None,
     fee_rate: float = 0.0005,
     slippage: float = 0.0003,
+    profile: dict[str, Any] | None = None,
+    base_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Check +/-1 step neighbor parameters around target_params for robustness plateau."""
     spec = FAMILY_SPECS[family]
-    axes = spec.param_axes
+    axes = get_param_axes(spec, profile)
     axis_keys = list(axes.keys())
 
     neighbors: list[dict[str, Any]] = []
@@ -192,27 +188,18 @@ def check_parameter_plateau(
             if 0 <= ni < len(vals):
                 cand = dict(target_params)
                 cand[k] = vals[ni]
-                if family == "ema_trend" and cand["fast_len"] >= cand["slow_len"]:
-                    continue
-                if family == "donchian_breakout" and cand["exit_len"] >= cand["entry_len"]:
+                if family == "trend_breakout" and cand["fast_len"] >= cand["slow_len"]:
                     continue
                 neighbors.append(cand)
 
     if not neighbors:
-        return {"neighbor_count": 0, "plateau_ratio": 0.0, "neighbors": []}
+        return {"neighbor_count": 0, "healthy_count": 0, "plateau_ratio": 0.0, "neighbors": []}
 
     results = []
     healthy = 0
     for p in neighbors:
         sigs = spec.signal_fn(df, p)
-        cfg = {
-            "direction": direction,
-            "fee_rate": fee_rate,
-            "slippage": slippage,
-            "interval": timeframe,
-            **spec.default_risk,
-            "atr_sl_mult": p.get("atr_sl_mult", 2.0),
-        }
+        cfg = build_backtest_config(timeframe, direction, spec, p, fee_rate, slippage, base_policy)
         res = run_perp_backtest(df, sigs, cfg, funding_df=funding_df)
         m = res["metrics"]
         is_ok = (m["total_return"] > 0.0) and (m["sharpe"] >= 0.3) and (m["trades"] >= 10)
@@ -263,6 +250,8 @@ def validate_candidates(
     fee_rate: float = 0.0005,
     slippage: float = 0.0003,
     top_groups: int = 8,
+    profile: dict[str, Any] | None = None,
+    base_policy: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Run Walk-Forward OOS + plateau validation on top arena groups and rank by OOS score."""
     groups = _dedupe_candidates(arena_candidates, max_groups=top_groups)
@@ -282,6 +271,8 @@ def validate_candidates(
             funding_df=funding_df,
             fee_rate=fee_rate,
             slippage=slippage,
+            profile=profile,
+            base_policy=base_policy,
         )
         if wf is None:
             continue
@@ -295,18 +286,15 @@ def validate_candidates(
             funding_df=funding_df,
             fee_rate=fee_rate,
             slippage=slippage,
+            profile=profile,
+            base_policy=base_policy,
         )
 
-        # Full-sample metrics for prod_params
         spec = FAMILY_SPECS[g["family"]]
         full_sigs = spec.signal_fn(df, wf["prod_params"])
-        full_cfg = {
-            "direction": g["direction"],
-            "fee_rate": fee_rate,
-            "slippage": slippage,
-            "interval": tf,
-            **wf["risk"],
-        }
+        full_cfg = build_backtest_config(
+            tf, g["direction"], spec, wf["prod_params"], fee_rate, slippage, base_policy
+        )
         full_res = run_perp_backtest(df, full_sigs, full_cfg, funding_df=funding_df)
 
         oos_m = wf["oos_metrics"]

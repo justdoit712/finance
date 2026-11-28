@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Flowsurface language(1) .ind overlay scripts for per-ticker strategies."""
+"""Generate Flowsurface language(1) .ind overlay scripts for per-ticker main-force playbooks."""
 
 from __future__ import annotations
 
@@ -9,17 +9,18 @@ import shutil
 from typing import Any
 
 
-def _header(symbol: str, title: str, max_bars_back: int = 2) -> str:
+def _header(symbol: str, title: str, max_bars_back: int = 5) -> str:
     sym_lower = symbol.lower()
     return "\n".join([
         "language(1)",
         f'indicator("{symbol} {title}", id = "strategy.{sym_lower}", max_bars_back = {max_bars_back})',
         'display(view = "plot", attachment = "overlay")',
         'format(precision = "base_ticker_min_tick")',
-        'style("bull", title = "Long / Fast", role = "success", shade = "base")',
-        'style("bear", title = "Short / Slow", role = "danger", shade = "base")',
-        'style("mid", title = "Basis / Filter", role = "neutral", shade = "base")',
+        'style("bull", title = "Long Entry", role = "success", shade = "base")',
+        'style("bear", title = "Short Entry", role = "danger", shade = "base")',
+        'style("mid", title = "Basis / Exit", role = "neutral", shade = "base")',
         'style("band", title = "Band Fill", role = "primary", shade = "faint")',
+        'style("stop", title = "ATR Stop", role = "warning", shade = "base")',
     ])
 
 
@@ -49,82 +50,125 @@ def _adx_block(period: int = 14) -> str:
     ])
 
 
-def _signal_plots(direction: str) -> str:
+def _state_machine_and_plots(direction: str, atr_sl_mult: float, has_atr_already: bool = False) -> str:
     allow_long, allow_short = _direction_flags(direction)
-    return "\n".join([
+    lines: list[str] = []
+    if not has_atr_already:
+        lines.extend([
+            "tr_val = ta.tr(chart.high, chart.low, chart.close)",
+            "atr_val = ta.rma(tr_val, 14)",
+        ])
+    lines.extend([
+        f'atr_sl_mult = input.float({float(atr_sl_mult):.2f}, "ATR Stop Mult", min = 0.5, max = 10.0)',
         f"allow_long = {allow_long}",
         f"allow_short = {allow_short}",
-        "long_sig = select(allow_long && entry_long, chart.low, na)",
-        "short_sig = select(allow_short && entry_short, chart.high, na)",
+        "raw_long = allow_long && entry_long",
+        "raw_short = allow_short && entry_short",
+        "raw_exit_long = exit_long || (allow_short && entry_short)",
+        "raw_exit_short = exit_short || (allow_long && entry_long)",
+        "state pos = 0",
+        "state stop_px = 0.0",
+        "prev_pos = pos",
+        "prev_stop = stop_px",
+        "stopped_long = prev_pos == 1 && prev_stop > 0.0 && chart.low <= prev_stop",
+        "stopped_short = prev_pos == -1 && prev_stop > 0.0 && chart.high >= prev_stop",
+        "do_exit_long = prev_pos == 1 && (raw_exit_long || stopped_long)",
+        "do_exit_short = prev_pos == -1 && (raw_exit_short || stopped_short)",
+        "pos_after_exit = select(do_exit_long || do_exit_short, 0, prev_pos)",
+        "can_enter = pos_after_exit == 0 && !na(atr_val) && atr_val > 0.0",
+        "do_enter_long = can_enter && raw_long && !raw_short",
+        "do_enter_short = can_enter && raw_short && !raw_long",
+        "pos := select(do_enter_long, 1, select(do_enter_short, -1, select(do_exit_long || do_exit_short, 0, prev_pos)))",
+        "stop_px := select(do_enter_long, chart.close - atr_sl_mult * atr_val, select(do_enter_short, chart.close + atr_sl_mult * atr_val, select(do_exit_long || do_exit_short, 0.0, prev_stop)))",
+        "long_sig = select(do_enter_long, chart.low, na)",
+        "short_sig = select(do_enter_short, chart.high, na)",
+        "exit_sig = select(do_exit_long || do_exit_short, chart.close, na)",
+        "active_stop = select(pos != 0 && stop_px > 0.0, stop_px, na)",
         'plot(long_sig, id = "long_entry", title = "Long Entry", precision = "instrument", color_slot = "bull", width = 5, pane = "main")',
         'plot(short_sig, id = "short_entry", title = "Short Entry", precision = "instrument", color_slot = "bear", width = 5, pane = "main")',
+        'plot(exit_sig, id = "exit_sig", title = "Exit Signal", precision = "instrument", color_slot = "mid", width = 4, pane = "main")',
+        'plot(active_stop, id = "stop_line", title = "ATR Stop", precision = "instrument", color_slot = "stop", width = 1.2, style = "step", pane = "main")',
         'mark(title = "Long Signal", source = "long_entry", kind = "point", color_slot = "bull")',
         'mark(title = "Short Signal", source = "short_entry", kind = "point", color_slot = "bear")',
+        'mark(title = "Exit Mark", source = "exit_sig", kind = "cross", color_slot = "mid")',
     ])
+    return "\n".join(lines)
 
 
 def generate_ind_source(symbol: str, family: str, direction: str, params: dict[str, Any]) -> str:
     symbol = symbol.strip().upper()
-    if family == "ema_trend":
-        fast_len = int(params["fast_len"])
-        slow_len = int(params["slow_len"])
-        adx_min = float(params.get("adx_min", 18.0))
+    atr_sl_mult = float(params.get("atr_sl_mult", 2.2))
+
+    # Aliases for backward compatibility
+    alias = {
+        "ema_trend": "trend_breakout",
+        "bb_squeeze_breakout": "squeeze_ignition",
+        "bb_mean_reversion": "climax_reversal",
+        "rsi_momentum_pullback": "ema_defense_pullback",
+    }
+    fam = alias.get(family, family)
+
+    if fam == "sweep_fade":
+        lookback = int(params.get("lookback", 24))
+        min_wick = float(params.get("min_wick", 0.42))
         body = "\n".join([
-            _header(symbol, "EMA Trend", max_bars_back=2),
-            f'fast_len = input.int({fast_len}, "Fast EMA", min = 2, max = 200)',
-            f'slow_len = input.int({slow_len}, "Slow EMA", min = 5, max = 500)',
-            f'adx_min = input.float({adx_min}, "Min ADX", min = 5.0, max = 60.0)',
-            "fast = ta.ema(chart.close, fast_len)",
-            "slow = ta.ema(chart.close, slow_len)",
-            "prev_fast = fast[1]",
-            "prev_slow = slow[1]",
-            _adx_block(14),
-            "entry_long = !na(prev_fast) && !na(prev_slow) && fast > slow && prev_fast <= prev_slow && !na(adx_val) && adx_val >= adx_min",
-            "entry_short = !na(prev_fast) && !na(prev_slow) && fast < slow && prev_fast >= prev_slow && !na(adx_val) && adx_val >= adx_min",
-            'plot(fast, id = "fast_ema", title = "Fast EMA", precision = "instrument", color_slot = "bull", width = 1.2, pane = "main")',
-            'plot(slow, id = "slow_ema", title = "Slow EMA", precision = "instrument", color_slot = "bear", width = 1.2, pane = "main")',
-            _signal_plots(direction),
+            _header(symbol, "Sweep Fade", max_bars_back=5),
+            f'lookback = input.int({lookback}, "Sweep Lookback", min = 5, max = 200)',
+            f'min_wick = input.float({min_wick:.2f}, "Min Wick Ratio", min = 0.1, max = 0.9)',
+            "hi_raw = ta.highest(chart.high, lookback)",
+            "lo_raw = ta.lowest(chart.low, lookback)",
+            "prev_hi = hi_raw[1]",
+            "prev_lo = lo_raw[1]",
+            "mid_exit = ta.sma(chart.close, lookback)",
+            "bar_rng = math.max(chart.high - chart.low, 0.0000001)",
+            "lower_wick = (math.min(chart.open, chart.close) - chart.low) / bar_rng",
+            "upper_wick = (chart.high - math.max(chart.open, chart.close)) / bar_rng",
+            "entry_long = !na(prev_lo) && chart.low < prev_lo && chart.close > prev_lo && lower_wick >= min_wick",
+            "entry_short = !na(prev_hi) && chart.high > prev_hi && chart.close < prev_hi && upper_wick >= min_wick",
+            "exit_long = !na(mid_exit) && chart.close >= mid_exit",
+            "exit_short = !na(mid_exit) && chart.close <= mid_exit",
+            'plot(prev_hi, id = "sw_hi", title = "Prior High", precision = "instrument", color_slot = "bear", width = 1.0, pane = "main")',
+            'plot(prev_lo, id = "sw_lo", title = "Prior Low", precision = "instrument", color_slot = "bull", width = 1.0, pane = "main")',
+            'plot(mid_exit, id = "sw_mid", title = "Mean Exit", precision = "instrument", color_slot = "mid", width = 1.0, pane = "main")',
+            _state_machine_and_plots(direction, atr_sl_mult, has_atr_already=False),
         ])
         return body + "\n"
 
-    if family == "donchian_breakout":
-        entry_len = int(params["entry_len"])
-        exit_len = int(params["exit_len"])
-        vol_mult = float(params.get("vol_mult", 1.1))
+    if fam == "ema_defense_pullback":
+        trend_len = int(params.get("trend_len", 55))
+        rsi_len = int(params.get("rsi_len", 14))
+        pullback_low = float(params.get("pullback_low", 40.0))
+        pullback_high = 100.0 - pullback_low
         body = "\n".join([
-            _header(symbol, "Donchian Breakout", max_bars_back=2),
-            f'entry_len = input.int({entry_len}, "Entry Window", min = 5, max = 200)',
-            f'exit_len = input.int({exit_len}, "Exit Window", min = 2, max = 100)',
-            f'vol_mult = input.float({vol_mult}, "Volume Mult", min = 0.5, max = 5.0)',
-            "hi_in = ta.highest(chart.high, entry_len)",
-            "lo_in = ta.lowest(chart.low, entry_len)",
-            "prev_hi = hi_in[1]",
-            "prev_lo = lo_in[1]",
-            "hi_out = ta.highest(chart.high, exit_len)",
-            "lo_out = ta.lowest(chart.low, exit_len)",
-            "vol_ma = ta.sma(chart.volume, 20)",
-            "vol_ok = !na(vol_ma) && chart.volume >= vol_ma * vol_mult",
-            "entry_long = !na(prev_hi) && chart.close > prev_hi && vol_ok",
-            "entry_short = !na(prev_lo) && chart.close < prev_lo && vol_ok",
-            'plot(prev_hi, id = "dc_upper", title = "Channel High", precision = "instrument", color_slot = "bull", width = 1.1, pane = "main")',
-            'plot(prev_lo, id = "dc_lower", title = "Channel Low", precision = "instrument", color_slot = "bear", width = 1.1, pane = "main")',
-            'plot((hi_out + lo_out) / 2.0, id = "dc_mid", title = "Exit Mid", precision = "instrument", color_slot = "mid", width = 1.0, pane = "main")',
-            'fill(upper = "dc_upper", lower = "dc_lower", geometry = "series_band", color_slot = "band", opacity = 0.08)',
-            _signal_plots(direction),
+            _header(symbol, "EMA Defense Pullback", max_bars_back=5),
+            f'trend_len = input.int({trend_len}, "Defense EMA", min = 5, max = 500)',
+            f'rsi_len = input.int({rsi_len}, "RSI Period", min = 2, max = 50)',
+            f'pullback_low = input.float({pullback_low:.1f}, "Pullback RSI", min = 15.0, max = 50.0)',
+            "trend_ema = ta.ema(chart.close, trend_len)",
+            "rsi_val = ta.rsi(chart.close, rsi_len)",
+            "prev_rsi = rsi_val[1]",
+            "tr_val = ta.tr(chart.high, chart.low, chart.close)",
+            "atr_val = ta.rma(tr_val, 14)",
+            "near_sup = !na(trend_ema) && !na(atr_val) && chart.close >= trend_ema * 0.99 && chart.close <= trend_ema + 2.2 * atr_val",
+            "near_res = !na(trend_ema) && !na(atr_val) && chart.close <= trend_ema * 1.01 && chart.close >= trend_ema - 2.2 * atr_val",
+            "entry_long = near_sup && !na(prev_rsi) && !na(rsi_val) && prev_rsi < pullback_low && rsi_val >= pullback_low",
+            f"entry_short = near_res && !na(prev_rsi) && !na(rsi_val) && prev_rsi > {pullback_high:.1f} && rsi_val <= {pullback_high:.1f}",
+            "exit_long = (!na(rsi_val) && rsi_val > 72.0) || (!na(trend_ema) && chart.close < trend_ema * 0.985)",
+            "exit_short = (!na(rsi_val) && rsi_val < 28.0) || (!na(trend_ema) && chart.close > trend_ema * 1.015)",
+            'plot(trend_ema, id = "trend_ema", title = "Defense EMA", precision = "instrument", color_slot = "mid", width = 1.4, pane = "main")',
+            _state_machine_and_plots(direction, atr_sl_mult, has_atr_already=True),
         ])
         return body + "\n"
 
-    if family == "bb_squeeze_breakout":
-        bb_len = int(params["bb_len"])
-        bb_std = float(params["bb_std"])
-        squeeze_pct = float(params.get("squeeze_pct", 0.40))
-        vol_mult = float(params.get("vol_mult", 1.2))
+    if fam == "squeeze_ignition":
+        bb_len = int(params.get("bb_len", 20))
+        bb_std = float(params.get("bb_std", 2.0))
+        vol_mult = float(params.get("vol_mult", 1.5))
         body = "\n".join([
-            _header(symbol, "BB Squeeze Breakout", max_bars_back=2),
+            _header(symbol, "Squeeze Ignition", max_bars_back=5),
             f'bb_len = input.int({bb_len}, "BB Period", min = 5, max = 200)',
-            f'bb_std = input.float({bb_std}, "BB Std", min = 0.5, max = 5.0)',
-            f'squeeze_pct = input.float({squeeze_pct}, "Squeeze Threshold", min = 0.1, max = 0.9)',
-            f'vol_mult = input.float({vol_mult}, "Volume Mult", min = 0.5, max = 5.0)',
+            f'bb_std = input.float({bb_std:.2f}, "BB Std", min = 0.5, max = 5.0)',
+            f'vol_mult = input.float({vol_mult:.2f}, "Volume Mult", min = 0.5, max = 5.0)',
             "basis = ta.sma(chart.close, bb_len)",
             "dev = ta.stdev(chart.close, bb_len) * bb_std",
             "upper = basis + dev",
@@ -132,82 +176,102 @@ def generate_ind_source(symbol: str, family: str, direction: str, params: dict[s
             "bw = select(!na(basis) && basis > 0.0, (upper - lower) / basis, na)",
             "bw_lo = ta.lowest(bw, 100)",
             "bw_hi = ta.highest(bw, 100)",
-            "bw_thresh = bw_lo + (bw_hi - bw_lo) * squeeze_pct",
+            "bw_thresh = bw_lo + (bw_hi - bw_lo) * 0.35",
             "prev_bw = bw[1]",
             "prev_thresh = bw_thresh[1]",
             "vol_ma = ta.sma(chart.volume, 20)",
+            "tr_val = ta.tr(chart.high, chart.low, chart.close)",
+            "atr_val = ta.rma(tr_val, 14)",
             "squeeze_ready = (!na(prev_bw) && !na(prev_thresh) && prev_bw <= prev_thresh) || (!na(bw) && !na(bw_thresh) && bw <= bw_thresh * 1.15)",
             "vol_ok = !na(vol_ma) && chart.volume >= vol_ma * vol_mult",
-            "entry_long = !na(upper) && chart.close > upper && squeeze_ready && vol_ok",
-            "entry_short = !na(lower) && chart.close < lower && squeeze_ready && vol_ok",
+            "not_overext = !na(atr_val) && (chart.high - chart.low) <= 2.5 * atr_val",
+            "entry_long = !na(upper) && chart.close > upper && squeeze_ready && vol_ok && not_overext",
+            "entry_short = !na(lower) && chart.close < lower && squeeze_ready && vol_ok && not_overext",
+            "exit_long = !na(basis) && chart.close < basis",
+            "exit_short = !na(basis) && chart.close > basis",
             'plot(basis, id = "bb_mid", title = "BB Basis", precision = "instrument", color_slot = "mid", width = 1.0, pane = "main")',
             'plot(upper, id = "bb_upper", title = "BB Upper", precision = "instrument", color_slot = "bull", width = 1.1, pane = "main")',
             'plot(lower, id = "bb_lower", title = "BB Lower", precision = "instrument", color_slot = "bear", width = 1.1, pane = "main")',
             'fill(upper = "bb_upper", lower = "bb_lower", geometry = "series_band", color_slot = "band", opacity = 0.10)',
-            _signal_plots(direction),
+            _state_machine_and_plots(direction, atr_sl_mult, has_atr_already=True),
         ])
         return body + "\n"
 
-    if family == "bb_mean_reversion":
-        bb_len = int(params["bb_len"])
-        bb_std = float(params["bb_std"])
-        rsi_os = float(params["rsi_os"])
+    if fam == "climax_reversal":
+        bb_len = int(params.get("bb_len", 20))
+        bb_std = float(params.get("bb_std", 2.2))
+        rsi_os = float(params.get("rsi_os", 28.0))
         rsi_ob = 100.0 - rsi_os
-        trend_ema = int(params.get("trend_ema", 200))
+        vol_spike = float(params.get("vol_spike", 1.5))
         body = "\n".join([
-            _header(symbol, "BB Mean Reversion", max_bars_back=2),
+            _header(symbol, "Climax Reversal", max_bars_back=5),
             f'bb_len = input.int({bb_len}, "BB Period", min = 5, max = 200)',
-            f'bb_std = input.float({bb_std}, "BB Std", min = 0.5, max = 5.0)',
-            f'rsi_os = input.float({rsi_os}, "RSI Oversold", min = 10.0, max = 45.0)',
-            f'trend_len = input.int({trend_ema}, "Macro EMA", min = 20, max = 500)',
+            f'bb_std = input.float({bb_std:.2f}, "BB Std", min = 0.5, max = 5.0)',
+            f'rsi_os = input.float({rsi_os:.1f}, "RSI Oversold", min = 10.0, max = 45.0)',
+            f'vol_spike = input.float({vol_spike:.2f}, "Volume Spike", min = 0.5, max = 5.0)',
             "basis = ta.sma(chart.close, bb_len)",
             "dev = ta.stdev(chart.close, bb_len) * bb_std",
             "upper = basis + dev",
             "lower = basis - dev",
             "rsi_val = ta.rsi(chart.close, 14)",
-            "macro_ema = ta.ema(chart.close, trend_len)",
-            "entry_long = !na(lower) && !na(rsi_val) && !na(macro_ema) && chart.close < lower && rsi_val <= rsi_os && chart.close >= macro_ema * 0.94",
-            f"entry_short = !na(upper) && !na(rsi_val) && !na(macro_ema) && chart.close > upper && rsi_val >= {rsi_ob} && chart.close <= macro_ema * 1.06",
+            "macro_ema = ta.ema(chart.close, 200)",
+            "vol_ma = ta.sma(chart.volume, 20)",
+            "bar_rng = math.max(chart.high - chart.low, 0.0000001)",
+            "lower_wick = (math.min(chart.open, chart.close) - chart.low) / bar_rng",
+            "upper_wick = (chart.high - math.max(chart.open, chart.close)) / bar_rng",
+            "exhaust_long = (!na(vol_ma) && chart.volume >= vol_ma * vol_spike) || lower_wick >= 0.35",
+            "exhaust_short = (!na(vol_ma) && chart.volume >= vol_ma * vol_spike) || upper_wick >= 0.35",
+            "entry_long = !na(lower) && !na(rsi_val) && !na(macro_ema) && chart.close < lower && rsi_val <= rsi_os && exhaust_long && chart.close >= macro_ema * 0.92",
+            f"entry_short = !na(upper) && !na(rsi_val) && !na(macro_ema) && chart.close > upper && rsi_val >= {rsi_ob:.1f} && exhaust_short && chart.close <= macro_ema * 1.08",
+            "exit_long = !na(basis) && chart.close >= basis",
+            "exit_short = !na(basis) && chart.close <= basis",
             'plot(basis, id = "bb_mid", title = "BB Basis", precision = "instrument", color_slot = "mid", width = 1.0, pane = "main")',
             'plot(upper, id = "bb_upper", title = "BB Upper", precision = "instrument", color_slot = "bear", width = 1.1, pane = "main")',
             'plot(lower, id = "bb_lower", title = "BB Lower", precision = "instrument", color_slot = "bull", width = 1.1, pane = "main")',
             'plot(macro_ema, id = "macro_ema", title = "Macro EMA", precision = "instrument", color_slot = "mid", width = 1.2, pane = "main")',
             'fill(upper = "bb_upper", lower = "bb_lower", geometry = "series_band", color_slot = "band", opacity = 0.10)',
-            _signal_plots(direction),
+            _state_machine_and_plots(direction, atr_sl_mult, has_atr_already=False),
         ])
         return body + "\n"
 
-    # rsi_momentum_pullback (default fallback)
-    trend_len = int(params.get("trend_len", 120))
-    rsi_len = int(params.get("rsi_len", 14))
-    pullback_low = float(params.get("pullback_low", 40.0))
-    pullback_high = 100.0 - pullback_low
+    # trend_breakout (default)
+    fast_len = int(params.get("fast_len", 12))
+    slow_len = int(params.get("slow_len", 48))
+    adx_min = float(params.get("adx_min", 18.0))
+    vol_mult = float(params.get("vol_mult", 1.0))
     body = "\n".join([
-        _header(symbol, "RSI Pullback", max_bars_back=2),
-        f'trend_len = input.int({trend_len}, "Trend EMA", min = 20, max = 500)',
-        f'rsi_len = input.int({rsi_len}, "RSI Period", min = 2, max = 50)',
-        f'pullback_low = input.float({pullback_low}, "Pullback RSI", min = 15.0, max = 50.0)',
-        "trend_ema = ta.ema(chart.close, trend_len)",
-        "rsi_val = ta.rsi(chart.close, rsi_len)",
-        "prev_rsi = rsi_val[1]",
-        "entry_long = !na(trend_ema) && !na(prev_rsi) && chart.close > trend_ema && prev_rsi < pullback_low && rsi_val >= pullback_low",
-        f"entry_short = !na(trend_ema) && !na(prev_rsi) && chart.close < trend_ema && prev_rsi > {pullback_high} && rsi_val <= {pullback_high}",
-        'plot(trend_ema, id = "trend_ema", title = "Trend EMA", precision = "instrument", color_slot = "mid", width = 1.3, pane = "main")',
-        _signal_plots(direction),
+        _header(symbol, "Trend Breakout", max_bars_back=5),
+        f'fast_len = input.int({fast_len}, "Fast EMA", min = 2, max = 200)',
+        f'slow_len = input.int({slow_len}, "Slow EMA", min = 5, max = 500)',
+        f'adx_min = input.float({adx_min:.1f}, "Min ADX", min = 5.0, max = 60.0)',
+        f'vol_mult = input.float({vol_mult:.2f}, "Volume Mult", min = 0.5, max = 5.0)',
+        "fast = ta.ema(chart.close, fast_len)",
+        "slow = ta.ema(chart.close, slow_len)",
+        "prev_fast = fast[1]",
+        "prev_slow = slow[1]",
+        "vol_ma = ta.sma(chart.volume, 20)",
+        _adx_block(14),
+        "vol_ok = !na(vol_ma) && chart.volume >= vol_ma * vol_mult",
+        "entry_long = !na(prev_fast) && !na(prev_slow) && fast > slow && prev_fast <= prev_slow && !na(adx_val) && adx_val >= adx_min && vol_ok",
+        "entry_short = !na(prev_fast) && !na(prev_slow) && fast < slow && prev_fast >= prev_slow && !na(adx_val) && adx_val >= adx_min && vol_ok",
+        "exit_long = !na(fast) && !na(slow) && fast < slow",
+        "exit_short = !na(fast) && !na(slow) && fast > slow",
+        'plot(fast, id = "fast_ema", title = "Fast EMA", precision = "instrument", color_slot = "bull", width = 1.2, pane = "main")',
+        'plot(slow, id = "slow_ema", title = "Slow EMA", precision = "instrument", color_slot = "bear", width = 1.2, pane = "main")',
+        _state_machine_and_plots(direction, atr_sl_mult, has_atr_already=True),
     ])
     return body + "\n"
 
 
 def install_to_flowsurface(ind_path: Path, symbol: str) -> list[Path]:
-    """Install .ind file into Flowsurface user indicator directories if present."""
+    """Install .ind file into all Flowsurface user indicator profile directories if present."""
     appdata = os.environ.get("APPDATA", "").strip()
     if not appdata:
         return []
     base = Path(appdata)
     installed: list[Path] = []
-    for profile_dir_name in ("flowsurface", "flowsurface-2"):
-        pdir = base / profile_dir_name
-        if pdir.exists():
+    for pdir in sorted(base.glob("flowsurface*")):
+        if pdir.is_dir():
             dest = pdir / "indicators" / "strategy" / f"{symbol.lower()}.ind"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ind_path, dest)
